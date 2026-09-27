@@ -1,0 +1,46 @@
+name: Build Q3 EXE (临时)
+
+# 临时 workflow：仅用于 Q3 便签归档的本地实机验证。
+# 在 windows-latest + msvc 工具链下 build x-hub.exe + 上传 artifact，
+# 用户从 fork 的 Actions 页面下载到本地双击运行。
+# 完工（用户验完）后删除该文件并 revert 这一个 commit。
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build release binary
+        run: npm run tauri:build -- --no-bundle
+
+      - name: List build output
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path src-tauri/target/release -Filter "x-hub.exe" | Select-Object FullName, Length
+
+      - name: Upload exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: x-hub-q3
+          path: src-tauri/target/release/x-hub.exe
+          if-no-files-found: error
