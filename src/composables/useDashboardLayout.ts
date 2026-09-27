@@ -138,13 +138,6 @@ export const DASH_MODULES: DashModuleDef[] = [
     variants: [v('overview', '概览', 2, 2, 2, 3, '在跑的 ClaudeHalo session 状态')],
   },
   {
-    // Q5 CC Switch 探测（紧凑布局, 仅状态 + 当前 provider）
-    id: 'ccswitch',
-    title: 'CC Switch',
-    defaultVariant: 'overview',
-    variants: [v('overview', '概览', 2, 1, 2, 1, '本地 CC Switch 实例状态')],
-  },
-  {
     id: 'resources',
     title: '速达数量',
     defaultVariant: 'overview',
