@@ -329,6 +329,21 @@ pub struct DetachedSticky {
     pub updated_at: String,
 }
 
+/// 便签归档（覆盖前/销毁前/手动触发的内容快照；永久保留，唯一移除路径是用户手动删除）
+///
+/// `source` 标识归档来源：`slot1` / `slot2`（工作台便签卡片）/`detached`（脱离浮窗便签）
+/// `source_id` 仅 detached 来源时有值（对应 detached_stickies.id），slot 来源固定为 None
+/// `reason` 归档触发原因：`user`（手动）/`auto_replace`（slot 覆盖前）/`auto_destroy`（detached 销毁前）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StickyArchive {
+    pub id: i64,
+    pub source: String,
+    pub source_id: Option<i64>,
+    pub content: String,
+    pub reason: String,
+    pub archived_at: String,
+}
+
 /// 提示词百宝箱单条（可置顶、统计复制次数）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Snippet {

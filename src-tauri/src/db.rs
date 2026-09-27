@@ -146,6 +146,21 @@ fn migrate(conn: &Connection) -> Result<()> {
           updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now'))
         );
 
+        CREATE TABLE IF NOT EXISTS sticky_archives (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          -- 来源：slot1 / slot2 / detached
+          source TEXT NOT NULL CHECK (source IN ('slot1', 'slot2', 'detached')),
+          -- 来源主键（仅 detached 时为 detached_stickies.id，slot 时 NULL）
+          source_id INTEGER,
+          content TEXT NOT NULL DEFAULT '',
+          -- 触发原因：user 手动 / auto_replace slot 覆盖前 / auto_destroy detached 销毁前
+          reason TEXT NOT NULL CHECK (reason IN ('user', 'auto_replace', 'auto_destroy')),
+          archived_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_sticky_archives_archived_at ON sticky_archives(archived_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_sticky_archives_source ON sticky_archives(source);
+
         CREATE TABLE IF NOT EXISTS snippets (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           title TEXT NOT NULL,
