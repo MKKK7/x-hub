@@ -274,12 +274,8 @@ const weatherSubText = computed(() => {
   font-weight: 600;
   white-space: normal;
   overflow-wrap: break-word;
-  /* 炫彩渐变文字：品牌色 → 粉 → 蓝 */
-  background: linear-gradient(100deg, var(--brand-500), #f472b6 45%, #38bdf8 80%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  color: transparent;
+  /* 非渐变文字色：直接用品牌色 */
+  color: var(--brand-500);
   transition: opacity 0.2s ease;
 }
 .clock-quote:hover span {

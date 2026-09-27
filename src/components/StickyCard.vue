@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { PanelTopClose, StickyNote, MoreHorizontal, Archive } from 'lucide-vue-next'
+import { PanelTopClose, StickyNote, Archive, History } from 'lucide-vue-next'
 import { useStore } from '../stores/workbench'
-import ContextMenu, { type ContextMenuItem } from './ContextMenu.vue'
 
 const props = defineProps<{ slot: 1 | 2; title?: string; hideTitle?: boolean }>()
 
@@ -58,20 +57,8 @@ async function onDetachClick() {
   }
 }
 
-// ⋯ 菜单（手动归档入口 + 查看归档历史）
-const menu = ref({ visible: false, x: 0, y: 0, items: [] as ContextMenuItem[] })
-
-function openMenu(e: MouseEvent, items: ContextMenuItem[]) {
-  // 必须延迟到当前事件派发结束后再置位：ContextMenu 在 window 上监听 contextmenu/click
-  // 用于点击别处关闭菜单，若在同一事件派发内同步置位，紧跟的全局关闭监听会在
-  // props 更新后立即把菜单关掉（表现为右键无反应）。
-  setTimeout(() => {
-    menu.value = { visible: true, x: e.clientX, y: e.clientY, items }
-  }, 0)
-}
-
+// 直接按钮：手动归档当前便签
 async function onArchiveCurrent() {
-  // 先 flush 防抖保存，再归档最新内容（确保归档的与 store 一致）
   if (saveTimer) {
     clearTimeout(saveTimer)
     saveTimer = null
@@ -86,24 +73,9 @@ async function onArchiveCurrent() {
   })
 }
 
+// 直接按钮：查看归档历史
 function onViewArchive() {
   window.dispatchEvent(new CustomEvent('xhub:open-sticky-archive'))
-}
-
-function onMenuClick(e: MouseEvent) {
-  e.stopPropagation()
-  const items: ContextMenuItem[] = [
-    {
-      label: '归档当前便签',
-      onClick: () => void onArchiveCurrent(),
-    },
-    {
-      dividerBefore: true,
-      label: '查看归档历史',
-      onClick: () => onViewArchive(),
-    },
-  ]
-  openMenu(e, items)
 }
 </script>
 
@@ -116,13 +88,22 @@ function onMenuClick(e: MouseEvent) {
       </h3>
       <div class="sticky-actions">
         <button
-          class="icon-btn sticky-more"
-          title="便签操作"
-          aria-label="便签操作"
+          class="icon-btn sticky-archive"
+          title="归档当前便签"
+          aria-label="归档当前便签"
           type="button"
-          @click="onMenuClick"
+          @click="onArchiveCurrent"
         >
-          <MoreHorizontal :size="14" :stroke-width="2" aria-hidden="true" />
+          <Archive :size="14" :stroke-width="2" aria-hidden="true" />
+        </button>
+        <button
+          class="icon-btn sticky-history"
+          title="查看归档历史"
+          aria-label="查看归档历史"
+          type="button"
+          @click="onViewArchive"
+        >
+          <History :size="14" :stroke-width="2" aria-hidden="true" />
         </button>
         <button
           class="icon-btn sticky-detach"
@@ -142,17 +123,6 @@ function onMenuClick(e: MouseEvent) {
       placeholder="随手记…"
       spellcheck="false"
     ></textarea>
-
-    <ContextMenu
-      :visible="menu.visible"
-      :x="menu.x"
-      :y="menu.y"
-      :items="menu.items"
-      @close="menu.visible = false"
-    />
-
-    <!-- 静默保留 Archive 引用：用于图标节点（未直接渲染） -->
-    <Archive v-if="false" aria-hidden="true" />
   </section>
 </template>
 
@@ -193,14 +163,16 @@ function onMenuClick(e: MouseEvent) {
   gap: 2px;
   flex-shrink: 0;
 }
-.sticky-more,
+.sticky-archive,
+.sticky-history,
 .sticky-detach {
   width: 26px;
   height: 26px;
   flex-shrink: 0;
   color: var(--text-3);
 }
-.sticky-more:hover,
+.sticky-archive:hover,
+.sticky-history:hover,
 .sticky-detach:hover {
   color: var(--brand-500);
   background: var(--brand-50);
