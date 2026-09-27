@@ -174,6 +174,28 @@ export interface DetachedSticky {
   updated_at: string
 }
 
+/** 便签归档（覆盖前/销毁前/手动触发的内容快照，永久保留） */
+export interface StickyArchive {
+  id: number
+  /** slot1 / slot2 / detached */
+  source: string
+  /** 仅 detached 来源时为 detached_stickies.id，slot 来源为 null */
+  source_id: number | null
+  content: string
+  /** user（手动）/ auto_replace（slot 覆盖前）/ auto_destroy（detached 销毁前） */
+  reason: string
+  /** "%Y-%m-%d %H:%M:%S%.6f" 格式字符串（repo::now()） */
+  archived_at: string
+}
+
+/** 恢复归档的结果 */
+export interface RestoreResult {
+  /** slot1 / slot2：内容已写回对应 slot；detached_created：已新建 detached sticky */
+  target: string
+  /** 仅 detached_created 时为新建 detached_stickies.id；其他为 null */
+  new_detached_id: number | null
+}
+
 export interface Snippet {
   id: number
   title: string
@@ -1026,6 +1048,33 @@ export const tauriApi = {
     invoke<number>('restore_detached_sticky', { slot }),
   deleteDetachedSticky: (slot: number) =>
     invoke<void>('delete_detached_sticky', { slot }),
+
+  // ---- 便签归档 ----
+  listStickyArchives: (payload?: { source?: string; limit?: number; offset?: number }) =>
+    invoke<StickyArchive[]>('list_sticky_archives', {
+      source: payload?.source ?? null,
+      limit: payload?.limit ?? null,
+      offset: payload?.offset ?? null,
+    }),
+  getStickyArchive: (id: number) =>
+    invoke<StickyArchive>('get_sticky_archive', { id }),
+  archiveSticky: (payload: {
+    source: string
+    source_id: number | null
+    content: string
+    /** 前端仅允许 'user'，auto_replace/auto_destroy 由后端内部使用 */
+    reason: string
+  }) =>
+    invoke<StickyArchive>('archive_sticky', {
+      source: payload.source,
+      sourceId: payload.source_id,
+      content: payload.content,
+      reason: payload.reason,
+    }),
+  restoreStickyArchive: (id: number) =>
+    invoke<RestoreResult>('restore_sticky_archive', { id }),
+  deleteStickyArchive: (id: number) =>
+    invoke<void>('delete_sticky_archive', { id }),
   parseDroppedPath: (path: string) => invoke<DroppedAppInfo>('parse_dropped_path', { path }),
   scanInstalledApps: () => invoke<InstalledAppInfo[]>('scan_installed_apps'),
   getRunningProcesses: () => invoke<string[]>('get_running_processes'),

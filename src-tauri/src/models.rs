@@ -344,6 +344,16 @@ pub struct StickyArchive {
     pub archived_at: String,
 }
 
+/// 恢复归档的结果（前端根据 target 字段决定下一步 UI）
+///
+/// - `target: "slot1" | "slot2"` —— 内容已写回对应 slot（stickies 表）
+/// - `target: "detached_created"` —— 已创建新 detached_sticky，`new_detached_id` 为其主键
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestoreResult {
+    pub target: String,
+    pub new_detached_id: Option<i64>,
+}
+
 /// 提示词百宝箱单条（可置顶、统计复制次数）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Snippet {

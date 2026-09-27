@@ -3,13 +3,13 @@ use crate::config;
 use crate::config::AppConfig;
 use crate::models::{
     ChatMessage, ChatModelConfig, ChatSession, ClipboardItem, Countdown, DetachedSticky, Note,
-    RepeatRule, Resource, ResourceKind, ResourceSubcategory, SearchResult, Snippet, Sticky, Tag,
-    Todo, TodoOccurrence, TodoTag, TodoTagLink,
+    RepeatRule, Resource, ResourceKind, ResourceSubcategory, RestoreResult, SearchResult,
+    Snippet, Sticky, StickyArchive, Tag, Todo, TodoOccurrence, TodoTag, TodoTagLink,
 };
 use crate::process;
 use crate::repo::{
-    chat, clipboard, countdown, detached_sticky, note, resource, snippet, sticky, subcategory,
-    tag, todo, todo_tag,
+    chat, clipboard, countdown, detached_sticky, note, resource, snippet, sticky, sticky_archive,
+    subcategory, tag, todo, todo_tag,
 };
 use crate::todo_recurrence;
 use rusqlite::Connection;
@@ -891,6 +891,153 @@ pub async fn delete_detached_sticky(
 
     crate::sticky_window::destroy(&app, slot);
     log::info!("删除浮窗便签: slot={}", slot);
+    Ok(())
+}
+
+// ---------- 便签归档 ----------
+
+/// 列出便签归档（按 archived_at DESC 倒序）
+///
+/// `source` 可选过滤（`slot1` / `slot2` / `detached`），None 时全部返回
+/// `limit` 默认 50、`offset` 默认 0
+#[tauri::command]
+pub fn list_sticky_archives(
+    state: State<'_, DbState>,
+    source: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<Vec<StickyArchive>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let src = source.as_deref();
+    let items = sticky_archive::list(&conn, src, limit.unwrap_or(50), offset.unwrap_or(0))
+        .map_err(err_str)?;
+    log::debug!(
+        "加载便签归档: {} 条 (source={:?})",
+        items.len(),
+        src
+    );
+    Ok(items)
+}
+
+/// 取单条归档；不存在时返回 NOT_FOUND 错误
+#[tauri::command]
+pub fn get_sticky_archive(state: State<'_, DbState>, id: i64) -> Result<StickyArchive, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    sticky_archive::get(&conn, id)
+        .map_err(err_str)?
+        .ok_or_else(|| format!("NOT_FOUND: 便签归档 {id} 不存在"))
+}
+
+/// 创建一条便签归档（手动触发或自动触发）
+///
+/// `source` 必须为 `slot1` / `slot2` / `detached`
+/// `source_id` 仅 detached 来源时有意义；slot 来源传 None
+/// `reason` 前端只能传 `user`；`auto_replace` / `auto_destroy` 仅由本模块
+/// 在 save_sticky / delete_detached_sticky 内部调用时设置（防前端伪造）
+#[tauri::command]
+pub fn archive_sticky(
+    state: State<'_, DbState>,
+    source: String,
+    source_id: Option<i64>,
+    content: String,
+    reason: String,
+) -> Result<StickyArchive, String> {
+    // 前端守卫：reason 只允许 user；auto_* 由后端内部调用
+    if reason != "user" {
+        return Err(format!(
+            "INVALID_ARGUMENT: 前端调用 reason 仅允许 'user'，'{reason}' 由后端保留"
+        ));
+    }
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let a = sticky_archive::create(&conn, &source, source_id, &content, &reason).map_err(err_str)?;
+    log::info!(
+        "手动归档便签: id={} source={} ({} 字)",
+        a.id,
+        a.source,
+        content.chars().count()
+    );
+    Ok(a)
+}
+
+/// 恢复便签归档
+///
+/// - slot1 / slot2 归档：写回原 slot；若该 slot 已被占（非空）返回 SLOT_OCCUPIED 错误
+/// - detached 归档：创建新 detached sticky（slot 默认 1）；返回新 detached 主键
+///
+/// 恢复后**不删除**归档行（永久保留）
+#[tauri::command]
+pub fn restore_sticky_archive(
+    state: State<'_, DbState>,
+    id: i64,
+) -> Result<RestoreResult, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    // 1) 取归档行
+    let archive = sticky_archive::get(&conn, id)
+        .map_err(err_str)?
+        .ok_or_else(|| format!("NOT_FOUND: 便签归档 {id} 不存在"))?;
+
+    match archive.source.as_str() {
+        "slot1" | "slot2" => {
+            let slot: i64 = archive.source.trim_end_matches(|c: char| !c.is_ascii_digit()).parse().unwrap_or(1);
+            // 检查 slot 是否已被占
+            let occupied = sticky::get_by_slot(&conn, slot)
+                .map_err(err_str)?
+                .map(|s| !s.content.trim().is_empty())
+                .unwrap_or(false);
+            if occupied {
+                return Err(format!(
+                    "SLOT_OCCUPIED: slot {slot} 已被占,请先归档当前内容"
+                ));
+            }
+            // 写回
+            sticky::upsert(&conn, slot, &archive.content).map_err(err_str)?;
+            log::info!("恢复归档: id={} → slot{}", id, slot);
+            Ok(RestoreResult {
+                target: archive.source.clone(),
+                new_detached_id: None,
+            })
+        }
+        "detached" => {
+            // 创建新 detached sticky（slot 默认 1；x-hub 同一时刻仅一个浮窗便签，
+            // 但 detached sticky 表允许多行 — 重复创建时新行 id 自增）
+            // 选择 slot 1 或 2：找第一个空 slot
+            let target_slot: i64 = (1..=2)
+                .find(|s| {
+                    detached_sticky::get_by_slot(&conn, *s)
+                        .map(|opt| opt.map(|d| d.content.trim().is_empty()).unwrap_or(true))
+                        .unwrap_or(true)
+                })
+                .unwrap_or(1);
+            let new = detached_sticky::upsert(
+                &conn,
+                target_slot,
+                &archive.content,
+                None,
+                None,
+                true,
+            )
+            .map_err(err_str)?;
+            log::info!(
+                "恢复归档: id={} → 新 detached_stickies.id={} (slot{})",
+                id,
+                new.id,
+                target_slot
+            );
+            Ok(RestoreResult {
+                target: "detached_created".to_string(),
+                new_detached_id: Some(new.id),
+            })
+        }
+        other => Err(format!("INVALID_ARGUMENT: 未知 source '{other}'")),
+    }
+}
+
+/// 彻底删除一条便签归档（用户主动「彻底删除」）
+#[tauri::command]
+pub fn delete_sticky_archive(state: State<'_, DbState>, id: i64) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    sticky_archive::delete(&conn, id).map_err(err_str)?;
+    log::info!("彻底删除便签归档: id={}", id);
     Ok(())
 }
 
