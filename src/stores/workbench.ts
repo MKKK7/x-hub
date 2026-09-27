@@ -1331,6 +1331,12 @@ export function useStore() {
     state.claudehaloSessions = await tauriApi.claudehaloGetStatus()
   }
 
+  /** CC Switch 状态（Q5：探测本地进程） */
+  async function refreshCcSwitch() {
+    if (!isTauri()) return null
+    return await tauriApi.ccswitchGetStatus()
+  }
+
   // ---- 剪贴板历史 ----
   async function setClipboardShortcut(value: string) {
     state.config.clipboard_shortcut = value
@@ -1623,6 +1629,7 @@ export function useStore() {
     refreshSystemInfo,
     refreshNetStats,
     refreshClaudeHalo,
+    refreshCcSwitch,
     checkOnline,
     refreshWeather,
     refreshQuote,

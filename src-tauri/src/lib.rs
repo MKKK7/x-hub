@@ -7,6 +7,7 @@ mod chat;
 mod chat_window;
 mod claudehalo;
 mod clipboard;
+mod ccswitch;
 mod commands;
 mod config;
 mod credentials;
@@ -638,6 +639,7 @@ pub fn run() {
             commands::import_note_image,
             commands::read_text_file,
             claudehalo::claudehalo_get_status,
+            ccswitch::ccswitch_get_status,
             commands::inspect_path,
             commands::scan_installed_apps,
             commands::get_running_processes,

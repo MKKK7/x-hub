@@ -871,6 +871,22 @@ export interface ClaudeHaloStatus {
   detected_at: number
 }
 
+/** CC Switch 状态（Q5：探测本地独立进程 + 配置目录） */
+export interface CcSwitchStatus {
+  /** cc-switch 进程是否在跑 */
+  running: boolean
+  /** 进程 PID（若 running） */
+  pid: number | null
+  /** 配置文件目录绝对路径（~/.cc-switch/ 等） */
+  config_dir: string | null
+  /** providers 数组大小（从 settings.json 读） */
+  provider_count: number
+  /** 当前选中的 provider 名 */
+  current_provider: string | null
+  /** 探测时戳 (毫秒) */
+  detected_at: number
+}
+
 export interface ChatSession {
   id: number
   title: string
@@ -1186,6 +1202,8 @@ export const tauriApi = {
   getNetStats: () => invoke<NetStats>('get_net_stats'),
   /** 探测所有在跑的 ClaudeHalo instance（Q2 进度监控） */
   claudehaloGetStatus: () => invoke<ClaudeHaloStatus[]>('claudehalo_get_status'),
+  /** 探测本地 CC Switch 状态（Q5：进程 + settings.json） */
+  ccswitchGetStatus: () => invoke<CcSwitchStatus>('ccswitch_get_status'),
   listSnippets: () => invoke<Snippet[]>('list_snippets'),
   createSnippet: (title: string, content: string) =>
     invoke<Snippet>('create_snippet', { title, content }),
