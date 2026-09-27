@@ -13,9 +13,11 @@ import {
   type Quote,
   type Resource,
   type ResourceSubcategory,
+  type RestoreResult,
+  type Sticky,
+  type StickyArchive,
   type SudaCustomModuleConfig,
   type Snippet,
-  type Sticky,
   type SystemInfo,
   type Tag,
   type Todo,
@@ -40,6 +42,8 @@ interface StoreState {
   todos: Todo[]
   stickies: Sticky[]
   detached: DetachedSticky[]
+  /** 便签归档（覆盖前/销毁前/手动触发的内容快照） */
+  stickyArchives: StickyArchive[]
   countdowns: Countdown[]
   snippets: Snippet[]
   tags: Tag[]
@@ -63,6 +67,7 @@ const state = reactive<StoreState>({
   todos: [],
   stickies: [],
   detached: [],
+  stickyArchives: [],
   countdowns: [],
   snippets: [],
   tags: [],
@@ -250,6 +255,48 @@ export function useStore() {
     const updated = await tauriApi.toggleSnippetPin(id)
     replaceSnippet(updated)
     return updated
+  }
+
+  // ---- 便签归档 ----
+  /** 加载便签归档（默认前 200 条；列表 UI 用 onMounted 调一次即可） */
+  async function loadStickyArchives() {
+    if (!isTauri()) return
+    state.stickyArchives = await tauriApi.listStickyArchives({ limit: 200 })
+  }
+
+  /** 手动归档当前便签内容（前端 ⋯ 菜单触发） */
+  async function archiveSticky(payload: {
+    source: 'slot1' | 'slot2' | 'detached'
+    source_id: number | null
+    content: string
+  }) {
+    if (!isTauri()) return null
+    const a = await tauriApi.archiveSticky({
+      source: payload.source,
+      source_id: payload.source_id,
+      content: payload.content,
+      reason: 'user',
+    })
+    state.stickyArchives.unshift(a)
+    return a
+  }
+
+  /** 恢复归档（slot 占用时由后端返 SLOT_OCCUPIED 错误，前端在 caller 捕获并弹窗） */
+  async function restoreStickyArchive(id: number): Promise<RestoreResult> {
+    if (!isTauri()) {
+      throw new Error('浏览器预览不支持恢复归档')
+    }
+    const result = await tauriApi.restoreStickyArchive(id)
+    // 写回 slot 或新建 detached —— 刷 stickies + detached 同步
+    await refreshStickies()
+    return result
+  }
+
+  /** 彻底删除归档（仅 user reason 可被删；auto_* 在 UI 层就隐藏删除按钮） */
+  async function deleteStickyArchive(id: number) {
+    if (!isTauri()) return
+    await tauriApi.deleteStickyArchive(id)
+    state.stickyArchives = state.stickyArchives.filter((x) => x.id !== id)
   }
 
   async function togglePromptFloat() {
@@ -1505,6 +1552,10 @@ export function useStore() {
     restoreDetachedSticky,
     deleteDetachedSticky,
     refreshStickies,
+    loadStickyArchives,
+    archiveSticky,
+    restoreStickyArchive,
+    deleteStickyArchive,
     addCountdown,
     editCountdown,
     removeCountdown,

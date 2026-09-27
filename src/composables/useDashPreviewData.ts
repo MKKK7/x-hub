@@ -147,6 +147,10 @@ const stickyText = computed<Record<number, string>>(() => {
   return out
 })
 
+// ---- 便签归档概览（按 archived_at DESC，最近一条预览） ----
+const archivedStickiesCount = computed(() => store.state.stickyArchives.length)
+const latestArchived = computed(() => store.state.stickyArchives[0] ?? null)
+
 // ---- 速记概览（latest 按 updated_at 降序 + 摘要规则同 NotesOverviewCard.summary）----
 const notesCount = computed(() => store.state.notes.length)
 const tagCount = computed(() => store.state.tags.length)
@@ -290,6 +294,8 @@ export const dashPreviewData = {
   memPct,
   memLabel,
   stickyText,
+  archivedStickiesCount,
+  latestArchived,
   notesCount,
   tagCount,
   latestNote,

@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import {
   AlarmClock,
   AlertTriangle,
+  Archive,
   ArrowRight,
   Boxes,
   CalendarDays,
@@ -85,6 +86,8 @@ const {
   memPct,
   memLabel,
   stickyText,
+  archivedStickiesCount,
+  latestArchived,
   notesCount,
   tagCount,
   latestNote,
@@ -352,6 +355,25 @@ const kind = computed(() => {
       <div v-else class="empty">
         <p class="empty-title">还没有待办</p>
         <p class="empty-sub">添加待办后会在这里展示概览</p>
+      </div>
+    </template>
+
+    <!-- ===== 便签归档 ===== -->
+    <template v-else-if="kind === 'sticky_archive'">
+      <header class="hd hd-split" :class="{ 'hd-float': hideTitle }">
+        <h3 v-if="!hideTitle" class="hd-title"><Archive class="ic" /><span>{{ title ?? '归档' }}</span></h3>
+        <span class="hd-btn"><ArrowRight class="ic" /></span>
+      </header>
+      <template v-if="archivedStickiesCount > 0">
+        <p class="sa-meta">共 {{ archivedStickiesCount }} 条</p>
+        <p v-if="latestArchived" class="sa-preview">
+          <span class="sa-src">{{ latestArchived.source }}</span>
+          <span class="sa-content">{{ (latestArchived.content || '').replace(/\s+/g, ' ').slice(0, 30) }}{{ (latestArchived.content || '').length > 30 ? '…' : '' }}</span>
+        </p>
+      </template>
+      <div v-else class="empty">
+        <p class="empty-title">还没有归档便签</p>
+        <p class="empty-sub">覆盖或销毁前自动留痕</p>
       </div>
     </template>
 
@@ -1204,6 +1226,38 @@ html[data-theme='dark'] .dpv {
   align-items: baseline;
   gap: calc(6 * var(--u));
   margin-bottom: calc(10 * var(--u));
+}
+
+/* ===== 便签归档 ===== */
+.sa-meta {
+  font-size: calc(13 * var(--u));
+  font-weight: 600;
+  color: var(--text-1);
+  margin: 0 0 calc(6 * var(--u));
+}
+.sa-preview {
+  display: flex;
+  align-items: center;
+  gap: calc(6 * var(--u));
+  font-size: calc(12 * var(--u));
+  color: var(--text-2);
+  margin: 0;
+}
+.sa-src {
+  flex-shrink: 0;
+  padding: calc(1 * var(--u)) calc(6 * var(--u));
+  border-radius: 999px;
+  background: var(--brand-50);
+  color: var(--brand-600);
+  font-size: calc(10 * var(--u));
+  font-weight: 600;
+}
+.sa-content {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-1);
 }
 .ro-total-value {
   font-size: calc(30 * var(--u));

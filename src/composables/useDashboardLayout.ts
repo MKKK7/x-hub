@@ -125,6 +125,12 @@ export const DASH_MODULES: DashModuleDef[] = [
     variants: [v('overview', '概览', 2, 1, 2, 2, '今日进度')],
   },
   {
+    id: 'sticky_archive',
+    title: '归档',
+    defaultVariant: 'overview',
+    variants: [v('overview', '概览', 2, 1, 2, 2, '已归档便签 + 还原')],
+  },
+  {
     id: 'resources',
     title: '速达数量',
     defaultVariant: 'overview',

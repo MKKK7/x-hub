@@ -14,6 +14,7 @@ import SudaCustomCard from '../components/SudaCustomCard.vue'
 import SysMonitorCard from '../components/SysMonitorCard.vue'
 import PromptBoxCard from '../components/PromptBoxCard.vue'
 import RecentBar from '../components/RecentBar.vue'
+import StickyArchiveCard from '../components/StickyArchiveCard.vue'
 import ClockCard from '../components/ClockCard.vue'
 import WeatherCard from '../components/WeatherCard.vue'
 import StickyCard from '../components/StickyCard.vue'
@@ -23,7 +24,7 @@ import { isTauri, tauriApi } from '../api/tauri'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import type { Countdown, ExtensionEntry, Note, Resource, Todo } from '../api/tauri'
 import { playChime } from '../utils/chime'
-import { FileText, FolderOpen, LayoutDashboard, ListTodo, MessageSquare, Puzzle, Settings, ChevronLeft, ChevronRight, AppWindow, PanelRight } from 'lucide-vue-next'
+import { FileText, FolderOpen, LayoutDashboard, ListTodo, MessageSquare, Puzzle, Settings, ChevronLeft, ChevronRight, AppWindow, PanelRight, Archive } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import { useTheme } from '../composables/useTheme'
 import { broadcastThemeToFrames } from '../composables/themeTokens'
@@ -56,6 +57,8 @@ const ChatPanel = defineAsyncComponent(() => import('../components/ChatPanel.vue
 const ExtensionCenter = defineAsyncComponent(() => import('../components/ExtensionCenter.vue'))
 const ExtensionView = defineAsyncComponent(() => import('../components/ExtensionView.vue'))
 const DashboardLayoutEditor = defineAsyncComponent(() => import('../components/DashboardLayoutEditor.vue'))
+// 便签归档视图：体量小但列表项多 + 行内按钮，按需分包
+const StickyArchiveView = defineAsyncComponent(() => import('../components/StickyArchiveView.vue'))
 
 const store = useStore()
 
@@ -118,6 +121,7 @@ const navigation = [
   { id: 'todos', label: '待办', icon: ListTodo },
   { id: 'notes', label: '速记', icon: FileText },
   { id: 'suda', label: '速达', icon: FolderOpen },
+  { id: 'sticky-archive', label: '归档', icon: Archive },
   { id: 'chat', label: '对话', icon: MessageSquare },
 ] as const
 
@@ -141,6 +145,11 @@ function onNavClick(id: ViewId) {
   if (id === 'chat' && !chatOpen.value) {
     toggleChat()
   }
+}
+
+// 便签归档入口：StickyCard ⋯ 菜单的「查看归档历史」用 window 事件触发，避免动态组件 emit 路由问题
+function openStickyArchive() {
+  activeView.value = 'sticky-archive'
 }
 
 // ---- 扩展打开：扩展中心点开某个扩展 → 主区渲染扩展入口（view 形态） ----
@@ -325,6 +334,7 @@ const dashCardComponents: Record<string, Component> = {
   todo: TodoCard,
   calendar: TodoCalendarCard,
   recent: RecentBar,
+  sticky_archive: StickyArchiveCard,
 }
 
 function dashCardComponent(id: string): Component {
@@ -361,6 +371,8 @@ function dashCardProps(p: DashPlacement): Record<string, unknown> {
       return { onOpenDetail: openNotes, ...titleProps(p) }
     case 'todo_overview':
       return { onOpenDetail: openTodo, ...titleProps(p) }
+    case 'sticky_archive':
+      return { onOpenDetail: openStickyArchive, ...titleProps(p) }
     case 'resources':
       return { onOpenDetail: openSuda, ...titleProps(p) }
     case 'suda1':
@@ -429,6 +441,7 @@ onMounted(async () => {
   const warmSettings = () => {
     void import('../components/SettingsView.vue')
     void import('../components/TodoView.vue')
+    void import('../components/StickyArchiveView.vue')
   }
   const idle = (
     window as unknown as {
@@ -526,6 +539,9 @@ onMounted(async () => {
   }
   window.addEventListener('keydown', onSearchKeydown)
   window.addEventListener('keydown', onChatKeydown)
+  // 便签归档跨组件跳转入口：StickyCard ⋯ 菜单 / StickyArchiveCard 跳转按钮通过
+  // window CustomEvent 派发（避免动态组件 emit 路由问题）
+  window.addEventListener('xhub:open-sticky-archive', openStickyArchive)
   await restoreChatPanel()
 })
 
@@ -553,6 +569,7 @@ onUnmounted(() => {
   unlistenTodoRemind?.()
   unlistenBallAction?.()
   unlistenOpenChatSettings?.()
+  window.removeEventListener('xhub:open-sticky-archive', openStickyArchive)
   unlistenChatMode?.()
   window.removeEventListener('suda-open-web-panel', onSudaWebPanelEvent)
   window.removeEventListener('keydown', onSearchKeydown)
@@ -912,6 +929,11 @@ provide('showToast', showToast)
         <!-- 速达：独立视图 -->
         <section v-else-if="activeView === 'suda'" class="view view-suda" tabindex="-1" aria-label="速达">
           <Suda />
+        </section>
+
+        <!-- 便签归档：独立视图 -->
+        <section v-else-if="activeView === 'sticky-archive'" class="view view-sticky-archive" tabindex="-1" aria-label="归档">
+          <StickyArchiveView />
         </section>
 
         <!-- 速达网页内嵌面板（ADR 0011）：工具栏是 DOM，内容区是预创建子 webview 的空白位 -->
@@ -1447,6 +1469,9 @@ html[data-wallpaper='1'] .title-bar [data-tip]::after {
 }
 .view-suda {
   padding: 0 20px 20px 0;
+}
+.view-sticky-archive {
+  padding: 0;
 }
 .view-settings {
   padding: 0 20px 20px 0;
