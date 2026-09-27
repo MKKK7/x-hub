@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { Cpu, MemoryStick } from 'lucide-vue-next'
+import { onBeforeUnmount, ref } from 'vue'
+import { Cpu, MemoryStick, ArrowDown, ArrowUp } from 'lucide-vue-next'
 import { useStore } from '../stores/workbench'
 import { useAdaptivePolling } from '../composables/useAdaptivePolling'
+import type { NetStats } from '../api/tauri'
 
 // 标题可由工作台自定义布局覆盖：title = 自定义文案，hideTitle = 关闭标题行
 defineProps<{ title?: string; hideTitle?: boolean }>()
@@ -12,13 +13,53 @@ const store = useStore()
 // 卡片根元素：滚出工作台视口时暂停采样
 const cardRef = ref<HTMLElement | null>(null)
 
-// 自适应采样：可见且聚焦 2s、失焦 5s、隐藏/滚出视口停；从停止恢复立即补采。
-// 隐藏即停的原因：收进托盘后 WebView2 若无节流（现由浏览器兜底钳到 ≥1s），
-// 每 2s 的 IPC + sysinfo 采样在后台空烧。visibilitychange/焦点/视口由 composable 统一处理
+// 自适应采样：可见且聚焦 1s、失焦 3s、隐藏/滚出视口停（Q1 网速要 1s 刷新）
 useAdaptivePolling(() => store.refreshSystemInfo(), {
-  activeMs: 2000,
-  idleMs: 5000,
+  activeMs: 1000,
+  idleMs: 3000,
   viewport: cardRef,
+})
+
+// 网络速率：1s 差值计算（KB/s），prev 缓存上次字节数
+const prevNet = ref<{ ts: number; rx: number; tx: number } | null>(null)
+const rateKBps = ref({ rx: 0, tx: 0 })
+
+function updateNetRates(stats: NetStats | null): void {
+  if (!stats) return
+  // 汇总所有接口的累计字节（去掉回环接口 0.0.0.0/Loopback）
+  let totalRx = 0
+  let totalTx = 0
+  for (const iface of stats.interfaces) {
+    if (iface.name.toLowerCase().includes('loopback')) continue
+    totalRx += iface.rxBytes
+    totalTx += iface.txBytes
+  }
+  const now = Date.now()
+  if (prevNet.value && now > prevNet.value.ts) {
+    const dtSec = (now - prevNet.value.ts) / 1000
+    const dRx = totalRx - prevNet.value.rx
+    const dTx = totalTx - prevNet.value.tx
+    // 防止计数器回绕（系统休眠 / 网络重置导致负值）
+    rateKBps.value = {
+      rx: Math.max(0, dRx) / dtSec / 1024,
+      tx: Math.max(0, dTx) / dtSec / 1024,
+    }
+  }
+  prevNet.value = { ts: now, rx: totalRx, tx: totalTx }
+}
+
+// 单独订阅 net 采样（1s 周期与 useAdaptivePolling 同步）
+useAdaptivePolling(async () => {
+  const stats = await store.refreshNetStats()
+  updateNetRates(stats)
+}, {
+  activeMs: 1000,
+  idleMs: 3000,
+  viewport: cardRef,
+})
+
+onBeforeUnmount(() => {
+  prevNet.value = null
 })
 
 const info = () => store.state.systemInfo
@@ -29,6 +70,13 @@ const memLabel = () => {
   const i = info()
   if (!i) return '—'
   return `${(i.memUsedMb / 1024).toFixed(1)} / ${(i.memTotalMb / 1024).toFixed(1)} GB`
+}
+
+function formatKBps(kbps: number): string {
+  if (kbps >= 1024) {
+    return `${(kbps / 1024).toFixed(1)} MB/s`
+  }
+  return `${kbps.toFixed(1)} KB/s`
 }
 </script>
 
@@ -77,12 +125,46 @@ const memLabel = () => {
         </div>
         <p class="sm-mem-label">{{ memLabel() }}</p>
       </div>
+
+      <div class="sm-item">
+        <div class="sm-item-top">
+          <span class="sm-item-name">
+            <ArrowDown :size="12" :stroke-width="2" aria-hidden="true" />
+            下行
+          </span>
+          <span class="sm-item-value">{{ formatKBps(rateKBps.rx) }}</span>
+        </div>
+        <div class="sm-bar">
+          <div
+            class="sm-bar-fill sm-bar-net"
+            :class="{ warn: rateKBps.rx >= 5 * 1024 }"
+            :style="{ transform: 'scaleX(' + Math.min(rateKBps.rx / 5120, 1) + ')' }"
+          ></div>
+        </div>
+      </div>
+
+      <div class="sm-item">
+        <div class="sm-item-top">
+          <span class="sm-item-name">
+            <ArrowUp :size="12" :stroke-width="2" aria-hidden="true" />
+            上行
+          </span>
+          <span class="sm-item-value">{{ formatKBps(rateKBps.tx) }}</span>
+        </div>
+        <div class="sm-bar">
+          <div
+            class="sm-bar-fill sm-bar-net"
+            :class="{ warn: rateKBps.tx >= 1 * 1024 }"
+            :style="{ transform: 'scaleX(' + Math.min(rateKBps.tx / 2048, 1) + ')' }"
+          ></div>
+        </div>
+      </div>
     </div>
   </section>
 </template>
 
 <style scoped>
-/* 紧凑版：约 110px 总高，无趋势图 */
+/* 紧凑版：约 220px 总高，4 行 (CPU/内存/↓/↑)，无趋势图 */
 .sys-monitor {
   display: flex;
   flex-direction: column;
@@ -122,12 +204,12 @@ const memLabel = () => {
 .sm-body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 .sm-item {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
 }
 .sm-item-top {
   display: flex;
@@ -143,7 +225,7 @@ const memLabel = () => {
   color: var(--text-2);
 }
 .sm-item-value {
-  font-size: 0.9375rem;
+  font-size: 0.875rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
@@ -158,7 +240,7 @@ const memLabel = () => {
   margin-left: 2px;
 }
 .sm-bar {
-  height: 8px;
+  height: 6px;
   border-radius: var(--radius-pill);
   background: var(--bg-card-soft);
   overflow: hidden;
@@ -170,6 +252,10 @@ const memLabel = () => {
   background: linear-gradient(90deg, var(--brand-600), var(--brand-500));
   transform-origin: left center;
   transition: transform 0.5s ease-out;
+}
+/* 网速：颜色与 CPU/内存不同, 用蓝色系区分 */
+.sm-bar-net {
+  background: linear-gradient(90deg, var(--c-blue), var(--c-blue-ink, #1d4ed8));
 }
 .sm-bar-fill.warn {
   background: linear-gradient(90deg, var(--c-orange), var(--c-red));

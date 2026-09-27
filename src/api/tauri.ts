@@ -840,6 +840,21 @@ export interface SystemInfo {
   memPercent: number
 }
 
+/** 网络接口（Q1 网速监控） */
+export interface NetInterface {
+  /** 接口显示名（如 "Ethernet", "Wi-Fi"） */
+  name: string
+  /** 累计接收字节数（前端做 1s 差值算速率） */
+  rxBytes: number
+  /** 累计发送字节数 */
+  txBytes: number
+}
+
+/** 网络统计（Q1） */
+export interface NetStats {
+  interfaces: NetInterface[]
+}
+
 export interface ChatSession {
   id: number
   title: string
@@ -1151,6 +1166,8 @@ export const tauriApi = {
     invoke<void>('floating_ball_reapply', { viewportW }),
   getThemeConfig: () => invoke<ThemeConfig>('get_theme_config'),
   getSystemInfo: () => invoke<SystemInfo>('get_system_info'),
+  /** 读取各网络接口累计收发字节数（Q1 网速监控，前端做 1s 差值算速率） */
+  getNetStats: () => invoke<NetStats>('get_net_stats'),
   listSnippets: () => invoke<Snippet[]>('list_snippets'),
   createSnippet: (title: string, content: string) =>
     invoke<Snippet>('create_snippet', { title, content }),

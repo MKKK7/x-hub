@@ -1315,6 +1315,12 @@ export function useStore() {
     return state.systemInfo
   }
 
+  /** 读取网络接口字节数（Q1：网速监控，前端做 1s 差值算速率） */
+  async function refreshNetStats() {
+    if (!isTauri()) return null
+    return await tauriApi.getNetStats()
+  }
+
   // ---- 剪贴板历史 ----
   async function setClipboardShortcut(value: string) {
     state.config.clipboard_shortcut = value
@@ -1605,6 +1611,7 @@ export function useStore() {
     setClipboardRetention,
     setClipboardMediaEnabled,
     refreshSystemInfo,
+    refreshNetStats,
     checkOnline,
     refreshWeather,
     refreshQuote,

@@ -35,6 +35,7 @@ mod skills;
 mod suda_browser;
 mod sticky_window;
 mod sysmon;
+mod netmon;
 mod todo_reminder;
 mod todo_recurrence;
 mod tray;
@@ -715,6 +716,7 @@ pub fn run() {
             commands::set_clipboard_shortcut,
             commands::set_clipboard_retention,
             sysmon::get_system_info,
+            netmon::get_net_stats,
             extension::list_extensions,
             extension::extensions_stamp,
             extension::read_extension_entry,
