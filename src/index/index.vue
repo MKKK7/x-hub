@@ -15,6 +15,7 @@ import SysMonitorCard from '../components/SysMonitorCard.vue'
 import PromptBoxCard from '../components/PromptBoxCard.vue'
 import RecentBar from '../components/RecentBar.vue'
 import StickyArchiveCard from '../components/StickyArchiveCard.vue'
+import ClaudeHaloCard from '../components/ClaudeHaloCard.vue'
 import ClockCard from '../components/ClockCard.vue'
 import WeatherCard from '../components/WeatherCard.vue'
 import StickyCard from '../components/StickyCard.vue'
@@ -335,6 +336,7 @@ const dashCardComponents: Record<string, Component> = {
   calendar: TodoCalendarCard,
   recent: RecentBar,
   sticky_archive: StickyArchiveCard,
+  claudehalo: ClaudeHaloCard,
 }
 
 function dashCardComponent(id: string): Component {
@@ -373,6 +375,8 @@ function dashCardProps(p: DashPlacement): Record<string, unknown> {
       return { onOpenDetail: openTodo, ...titleProps(p) }
     case 'sticky_archive':
       return { onOpenDetail: openStickyArchive, ...titleProps(p) }
+    case 'claudehalo':
+      return { ...titleProps(p) } // ClaudeHaloCard 无二级视图, 仅展示
     case 'resources':
       return { onOpenDetail: openSuda, ...titleProps(p) }
     case 'suda1':

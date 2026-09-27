@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { computed, inject, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Copy, MessageSquare, Minus, Pin, PinOff, Search, Square, X } from 'lucide-vue-next'
+import { Copy, MessageSquare, Minus, Pin, PinOff, Search, Sparkles, Square, X } from 'lucide-vue-next'
 import { isTauri, tauriApi } from '../api/tauri'
 import { useStore } from '../stores/workbench'
 
@@ -17,6 +17,24 @@ defineEmits<{
 }>()
 
 const alwaysOnTop = computed(() => store.state.config.window.always_on_top)
+
+// Q2: ClaudeHalo 状态点（颜色按 state 映射）
+const claudehaloSessions = computed(() => store.state.claudehaloSessions)
+const claudehaloPrimary = computed(() => {
+  // 多 session 时取第一个 thinking/working/waiting_input 优先；否则显示第一个 idle
+  const s = claudehaloSessions.value
+  if (s.length === 0) return null
+  return (
+    s.find((x) => x.state === 'thinking' || x.state === 'working' || x.state === 'waiting_input') ??
+    s[0] ??
+    null
+  )
+})
+const claudehaloTitle = computed(() => {
+  const s = claudehaloPrimary.value
+  if (!s) return '未检测到 ClaudeHalo'
+  return `Claude :${s.port} · ${s.state}`
+})
 
 function toggleAlwaysOnTop() {
   void store.setAlwaysOnTop(!alwaysOnTop.value)
@@ -46,6 +64,8 @@ onMounted(async () => {
   if (!appWindow) return
   await refreshMaximized()
   unlistenResize = await appWindow.onResized(() => refreshMaximized())
+  // Q2: 首次探测 ClaudeHalo（之后由 ClaudeHaloCard 持续 1s 轮询）
+  void store.refreshClaudeHalo()
 })
 
 onBeforeUnmount(() => {
@@ -83,6 +103,17 @@ function close() {
       </button>
       <button class="tool-btn" title="AI 对话 (Ctrl+Shift+K)" @click="$emit('chat')">
         <MessageSquare :size="15" :stroke-width="1.8" />
+      </button>
+      <!-- Q2: ClaudeHalo 状态点（仅图标 + tooltip；点击不响应） -->
+      <button
+        class="tool-btn claudehalo-dot"
+        :class="claudehaloPrimary ? 'ch-' + claudehaloPrimary.state : 'ch-none'"
+        :title="claudehaloTitle"
+        aria-label="ClaudeHalo 状态"
+        type="button"
+        tabindex="-1"
+      >
+        <Sparkles :size="15" :stroke-width="1.8" />
       </button>
       <div class="tool-divider"></div>
       <button
@@ -164,6 +195,29 @@ function close() {
   height: 18px;
   background: var(--border-soft);
   margin: 0 4px;
+}
+/* Q2: ClaudeHalo 状态点 */
+.claudehalo-dot {
+  position: relative;
+}
+.claudehalo-dot svg {
+  transition: color 0.3s ease;
+}
+.claudehalo-dot.ch-thinking svg {
+  color: var(--c-purple-ink, #6d28d9);
+}
+.claudehalo-dot.ch-working svg {
+  color: var(--c-blue-ink, #1d4ed8);
+}
+.claudehalo-dot.ch-waiting_input svg {
+  color: var(--c-orange-ink, #b45309);
+}
+.claudehalo-dot.ch-idle svg {
+  color: var(--text-3);
+}
+.claudehalo-dot.ch-none svg {
+  color: var(--text-4);
+  opacity: 0.6;
 }
 .win-btn {
   width: 46px;

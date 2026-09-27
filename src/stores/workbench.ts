@@ -6,6 +6,7 @@ import {
   isTauri,
   type AppConfig,
   type ChatModelConfig,
+  type ClaudeHaloStatus,
   type Countdown,
   type DetachedSticky,
   type GeoLocation,
@@ -58,6 +59,8 @@ interface StoreState {
   online: boolean
   weather: WeatherCurrent | null
   quote: Quote | null
+  /** Q2: ClaudeHalo 探测到的所有 session 状态 */
+  claudehaloSessions: ClaudeHaloStatus[]
   loaded: boolean
 }
 
@@ -157,6 +160,7 @@ const state = reactive<StoreState>({
   online: false,
   weather: null,
   quote: null,
+  claudehaloSessions: [],
   loaded: false,
 })
 
@@ -1321,6 +1325,12 @@ export function useStore() {
     return await tauriApi.getNetStats()
   }
 
+  /** ClaudeHalo session 状态（Q2：进度监控） */
+  async function refreshClaudeHalo() {
+    if (!isTauri()) return
+    state.claudehaloSessions = await tauriApi.claudehaloGetStatus()
+  }
+
   // ---- 剪贴板历史 ----
   async function setClipboardShortcut(value: string) {
     state.config.clipboard_shortcut = value
@@ -1612,6 +1622,7 @@ export function useStore() {
     setClipboardMediaEnabled,
     refreshSystemInfo,
     refreshNetStats,
+    refreshClaudeHalo,
     checkOnline,
     refreshWeather,
     refreshQuote,

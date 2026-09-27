@@ -5,6 +5,7 @@ mod autostart;
 mod browsers;
 mod chat;
 mod chat_window;
+mod claudehalo;
 mod clipboard;
 mod commands;
 mod config;
@@ -636,6 +637,7 @@ pub fn run() {
             commands::cleanup_wallpapers,
             commands::import_note_image,
             commands::read_text_file,
+            claudehalo::claudehalo_get_status,
             commands::inspect_path,
             commands::scan_installed_apps,
             commands::get_running_processes,

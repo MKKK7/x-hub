@@ -131,6 +131,13 @@ export const DASH_MODULES: DashModuleDef[] = [
     variants: [v('overview', '概览', 2, 1, 2, 2, '已归档便签 + 还原')],
   },
   {
+    // Q2 ClaudeHalo 进度监控（占用稍宽, 多 session 时纵向滚动）
+    id: 'claudehalo',
+    title: 'Claude 进度',
+    defaultVariant: 'overview',
+    variants: [v('overview', '概览', 2, 2, 2, 3, '在跑的 ClaudeHalo session 状态')],
+  },
+  {
     id: 'resources',
     title: '速达数量',
     defaultVariant: 'overview',

@@ -855,6 +855,22 @@ export interface NetStats {
   interfaces: NetInterface[]
 }
 
+/** ClaudeHalo 单 session 状态（Q2 进度监控） */
+export interface ClaudeHaloStatus {
+  /** 监听端口 (7700 起) */
+  port: number
+  /** Claude Code session id */
+  session_id: string | null
+  /** idle / thinking / working / waiting_input / unknown */
+  state: string
+  /** 主机名 */
+  hostname: string | null
+  /** 工作目录（ClaudeHaloManage 暂未暴露, 留作 Option） */
+  cwd: string | null
+  /** 探测时戳 (毫秒) */
+  detected_at: number
+}
+
 export interface ChatSession {
   id: number
   title: string
@@ -1168,6 +1184,8 @@ export const tauriApi = {
   getSystemInfo: () => invoke<SystemInfo>('get_system_info'),
   /** 读取各网络接口累计收发字节数（Q1 网速监控，前端做 1s 差值算速率） */
   getNetStats: () => invoke<NetStats>('get_net_stats'),
+  /** 探测所有在跑的 ClaudeHalo instance（Q2 进度监控） */
+  claudehaloGetStatus: () => invoke<ClaudeHaloStatus[]>('claudehalo_get_status'),
   listSnippets: () => invoke<Snippet[]>('list_snippets'),
   createSnippet: (title: string, content: string) =>
     invoke<Snippet>('create_snippet', { title, content }),
