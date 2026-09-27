@@ -62,3 +62,7 @@ dev-dialog-preview/
 
 # 本地文档（含 ADR / 原型 / 方案稿），只留本地不入库
 /docs/
+
+# Claude Code 项目级配置（个人工具，不随项目分发）
+.claude/
+CLAUDE.md
