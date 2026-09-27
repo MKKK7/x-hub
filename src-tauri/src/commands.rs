@@ -731,7 +731,26 @@ pub fn save_sticky(
         return Err("便签槽位取值 1-2".into());
     }
     let conn = state.0.lock().map_err(|e| e.to_string())?;
+    // 自动归档钩子：覆盖前快照旧内容（在同 conn 锁内，避免与并发 save 抢跑）
+    let old = sticky::get_by_slot(&conn, slot).map_err(err_str)?;
+    let old_content_trimmed = old
+        .as_ref()
+        .map(|s| s.content.trim().to_string())
+        .unwrap_or_default();
+    let new_content_trimmed = content.trim().to_string();
     let sticky = sticky::upsert(&conn, slot, &content).map_err(err_str)?;
+    // 旧内容非空 + 与新内容确实不同 → 归档旧内容（reason=auto_replace）
+    if !old_content_trimmed.is_empty() && old_content_trimmed != new_content_trimmed {
+        if let Some(old_s) = old {
+            archive_sticky_internal(
+                &conn,
+                &format!("slot{slot}"),
+                None,
+                &old_s.content,
+                "auto_replace",
+            )?;
+        }
+    }
     log::debug!("保存便签: slot={} 内容 {} 字", slot, content.chars().count());
     Ok(sticky)
 }
@@ -886,7 +905,15 @@ pub async fn delete_detached_sticky(
         return Err("便签槽位取值 1-2".into());
     }
     let conn = state.0.lock().map_err(|e| e.to_string())?;
+    // 自动归档钩子：销毁前快照（避免 destroy 后无法读 content 与 id）
+    let old = detached_sticky::get_by_slot(&conn, slot).map_err(err_str)?;
     detached_sticky::delete_by_slot(&conn, slot).map_err(err_str)?;
+    // 非空 → 归档（reason=auto_destroy, source_id=原 detached_stickies.id）
+    if let Some(old) = old {
+        if !old.content.trim().is_empty() {
+            archive_sticky_internal(&conn, "detached", Some(old.id), &old.content, "auto_destroy")?;
+        }
+    }
     drop(conn);
 
     crate::sticky_window::destroy(&app, slot);
@@ -942,18 +969,31 @@ pub fn archive_sticky(
     content: String,
     reason: String,
 ) -> Result<StickyArchive, String> {
-    // 前端守卫：reason 只允许 user；auto_* 由后端内部调用
+    // 前端守卫：reason 只允许 user；auto_* 由后端保留
     if reason != "user" {
         return Err(format!(
             "INVALID_ARGUMENT: 前端调用 reason 仅允许 'user'，'{reason}' 由后端保留"
         ));
     }
     let conn = state.0.lock().map_err(|e| e.to_string())?;
-    let a = sticky_archive::create(&conn, &source, source_id, &content, &reason).map_err(err_str)?;
+    archive_sticky_internal(&conn, &source, source_id, &content, &reason)
+}
+
+/// 后端内部入口：save_sticky / delete_detached_sticky 自动归档时调用，无 reason 守卫
+/// 调用方需保证 reason 为合法值（"auto_replace" / "auto_destroy" / "user"）
+fn archive_sticky_internal(
+    conn: &Connection,
+    source: &str,
+    source_id: Option<i64>,
+    content: &str,
+    reason: &str,
+) -> Result<StickyArchive, String> {
+    let a = sticky_archive::create(conn, source, source_id, content, reason).map_err(err_str)?;
     log::info!(
-        "手动归档便签: id={} source={} ({} 字)",
+        "自动/手动归档: id={} source={} reason={} ({} 字)",
         a.id,
         a.source,
+        a.reason,
         content.chars().count()
     );
     Ok(a)
