@@ -2963,12 +2963,15 @@ fn auto_chat_title(content: &str) -> String {
 ///
 /// 流程：落库用户消息 → 组装历史上下文 → 流式请求 → 增量逐段推 Chunk →
 /// 完整回复落库后推 Done；出错时推 Error 并保留已生成部分（前端展示，不入库）
+///
+/// `system_prompt`（Q6）：可选 system 提示，仅本轮请求注入，不入库。
 #[tauri::command]
 pub async fn send_chat_message(
     state: State<'_, DbState>,
     session_id: i64,
     content: String,
     on_event: tauri::ipc::Channel<crate::chat::ChatStreamEvent>,
+    system_prompt: Option<String>,
 ) -> Result<(), String> {
     let content = content.trim().to_string();
     if content.is_empty() {
@@ -2995,10 +2998,25 @@ pub async fn send_chat_message(
 
     // 3) 读取最近一段历史作为上下文窗口（长对话不再全量加载，
     //    避免历史越长发送越慢、内存按全量历史成倍膨胀）
-    let history = {
+    let mut history = {
         let conn = state.0.lock().map_err(|e| e.to_string())?;
         chat::list_recent_messages(&conn, session_id, CHAT_CONTEXT_WINDOW).map_err(err_str)?
     };
+
+    // 3.5) 临时注入 system 提示（Q6：AI 工具调用说明）
+    // 不入库、不影响持久化历史；stream_chat 透传 messages 字段
+    if let Some(sys) = system_prompt.as_deref().filter(|s| !s.is_empty()) {
+        history.insert(
+            0,
+            ChatMessage {
+                id: -1,
+                session_id,
+                role: "system".to_string(),
+                content: sys.to_string(),
+                created_at: String::new(),
+            },
+        );
+    }
 
     // 4) 解析模型配置：平台额度走「一个入口 + 多模型负载切换」，自备供应商精确命中（见 pick_chat_model）
     let models = config::load().chat_models;
@@ -3405,6 +3423,52 @@ pub async fn locate_weather_by_ip() -> Result<crate::online::GeoLocation, String
 }
 
 // ---------- 工具 ----------
+
+/// 读取文本文件（AI 工具调用专用，Q6）
+///
+/// 仅当用户消息里显式提供路径时 AI 才会调用；不允许 AI 自己发明路径。
+/// 强约束：UTF-8 文本、大小 ≤ 500 KB、扩展名白名单（拒二进制）。
+#[tauri::command]
+pub fn read_text_file(path: String) -> Result<String, String> {
+    use std::path::Path;
+
+    const MAX_BYTES: u64 = 500 * 1024;
+    const ALLOWED_EXTS: &[&str] = &[
+        "txt", "md", "markdown", "json", "csv", "tsv", "log",
+        "py", "ts", "tsx", "js", "jsx", "mjs", "cjs", "vue", "svelte",
+        "rs", "go", "java", "kt", "rb", "php", "cs", "cpp", "c", "h",
+        "sh", "bash", "zsh", "ps1", "bat", "yml", "yaml", "toml", "ini",
+        "conf", "cfg", "html", "htm", "xml", "css", "scss", "less",
+        "sql", "graphql", "proto", "env", "gitignore", "dockerfile",
+    ];
+
+    let p = Path::new(&path);
+    if !p.is_absolute() {
+        return Err(format!("需要绝对路径, 收到相对路径: {path}"));
+    }
+    let ext = p
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase());
+    let ext = match ext {
+        Some(e) => e,
+        None => return Err(format!("无扩展名文件被拒绝（防二进制）: {path}")),
+    };
+    if !ALLOWED_EXTS.contains(&ext.as_str()) {
+        return Err(format!("扩展名 .{ext} 不在白名单内"));
+    }
+    let meta = std::fs::metadata(p).map_err(|e| format!("stat 失败: {}", e))?;
+    if meta.len() > MAX_BYTES {
+        return Err(format!(
+            "文件过大 ({} 字节 > {} 上限), 请分块读取或精简",
+            meta.len(),
+            MAX_BYTES
+        ));
+    }
+    let content = std::fs::read_to_string(p).map_err(|e| format!("读取失败: {}", e))?;
+    log::info!("AI read_text_file: {} ({} 字节)", path, content.len());
+    Ok(content)
+}
 
 fn err_str(e: rusqlite::Error) -> String {
     format!("数据库错误: {}", e)

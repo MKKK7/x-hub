@@ -5,6 +5,8 @@ import DOMPurify from 'dompurify'
 import { ChevronDown, MessageSquare, PanelRightClose, Plus, Send, Settings2, X } from 'lucide-vue-next'
 import { PLATFORM_ENTRY_NAME, isPlatformModel, isTauri, tauriApi, type ChatMessage, type ChatModelConfig, type ChatSession, type ChatStreamEvent } from '../api/tauri'
 import AppSelect from './AppSelect.vue'
+import { TOOL_DESCRIPTIONS, executeTool, formatToolResult } from '../ai/tools'
+import { parseToolCalls } from '../ai/toolCallParser'
 
 const props = defineProps<{
   side?: 'left' | 'right' | 'top' | 'bottom'
@@ -338,38 +340,45 @@ async function send() {
   scrollToBottom(true)
 
   try {
-    await tauriApi.sendChatMessage(activeSessionId.value, content, (e: ChatStreamEvent) => {
-      if (e.type === 'chunk') {
-        streamingContent.value += e.content
-        scheduleStreamRender()
-        scrollToBottom()
-      } else if (e.type === 'done') {
-        cancelStreamRender()
-        streamHtml.value = ''
-        // 用后端落库的权威消息替换占位回复
-        const i = messages.value.findIndex((m) => m.id === userMsg.id)
-        messages.value = [...messages.value.slice(0, i + 1), e.message]
-        streamingContent.value = ''
-        sending.value = false
-        // 后端返回的会话含自动生成的标题与累计 token，直接替换本地条目
-        const idx = sessions.value.findIndex((x) => x.id === e.session.id)
-        if (idx >= 0) {
-          sessions.value = sessions.value
-            .map((x) => (x.id === e.session.id ? e.session : x))
-            .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
-        } else {
-          sessions.value.unshift(e.session)
+    await tauriApi.sendChatMessage(
+      activeSessionId.value,
+      content,
+      (e: ChatStreamEvent) => {
+        if (e.type === 'chunk') {
+          streamingContent.value += e.content
+          scheduleStreamRender()
+          scrollToBottom()
+        } else if (e.type === 'done') {
+          cancelStreamRender()
+          streamHtml.value = ''
+          // 用后端落库的权威消息替换占位回复
+          const i = messages.value.findIndex((m) => m.id === userMsg.id)
+          messages.value = [...messages.value.slice(0, i + 1), e.message]
+          streamingContent.value = ''
+          sending.value = false
+          // 后端返回的会话含自动生成的标题与累计 token，直接替换本地条目
+          const idx = sessions.value.findIndex((x) => x.id === e.session.id)
+          if (idx >= 0) {
+            sessions.value = sessions.value
+              .map((x) => (x.id === e.session.id ? e.session : x))
+              .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+          } else {
+            sessions.value.unshift(e.session)
+          }
+          scrollToBottom(true)
+          // Q6: AI 回复里如果有工具调用块, 自动执行并把结果显示在对话中
+          void handleAiToolCalls(e.message.content)
+        } else if (e.type === 'error') {
+          cancelStreamRender()
+          streamError.value = e.message
+          if (e.partial) streamingContent.value = e.partial
+          streamHtml.value = renderMd(streamingContent.value)
+          sending.value = false
+          scrollToBottom(true)
         }
-        scrollToBottom(true)
-      } else if (e.type === 'error') {
-        cancelStreamRender()
-        streamError.value = e.message
-        if (e.partial) streamingContent.value = e.partial
-        streamHtml.value = renderMd(streamingContent.value)
-        sending.value = false
-        scrollToBottom(true)
-      }
-    })
+      },
+      TOOL_DESCRIPTIONS, // Q6: system 注入工具说明（不入库，仅本轮请求）
+    )
   } catch (err) {
     cancelStreamRender()
     streamError.value = String(err)
@@ -393,6 +402,45 @@ function scrollToBottom(force = false) {
       }
     }
   })
+}
+
+/**
+ * Q6 AI 工具调用处理器
+ *
+ * 流式回复结束后扫描 `<tool_call>{json}</tool_call>` 块, 依次执行,
+ * 把执行结果作为新"用户消息"(role=user 但内容是工具结果) 推入消息列表显示。
+ * 当前版本: 不自动续聊, 用户看完结果后手动发送"继续"或新指令。
+ * 后续薄片可加 plan-then-execute 模式 + 自动续聊。
+ */
+async function handleAiToolCalls(aiContent: string): Promise<void> {
+  const calls = parseToolCalls(aiContent)
+  if (calls.length === 0) return
+
+  for (const item of calls) {
+    const ts = Date.now()
+    if (!item.ok) {
+      // 解析失败: 显式告诉用户 (不入库, 仅本地展示)
+      messages.value.push({
+        id: ts,
+        session_id: activeSessionId.value ?? 0,
+        role: 'user',
+        content: `[工具调用失败: ${item.error}]\n原始块: ${item.raw}`,
+        created_at: new Date(ts).toISOString(),
+      } as ChatMessage)
+      continue
+    }
+    const result = await executeTool(item.call)
+    // 工具调用结果作为 user 消息插入 (本地内存, 不入库)
+    const formatted = formatToolResult(result, item.call.name)
+    messages.value.push({
+      id: ts,
+      session_id: activeSessionId.value ?? 0,
+      role: 'user',
+      content: formatted,
+      created_at: new Date(ts).toISOString(),
+    } as ChatMessage)
+    scrollToBottom(true)
+  }
 }
 
 // 用户手动滚动：不在底部（且内容可滚动）时显示跳转按钮

@@ -1087,6 +1087,8 @@ export const tauriApi = {
   /** 保存笔记图片（base64，不含 data: 前缀）：落盘 notes/images，返回 xhub-note 协议 URL */
   importNoteImage: (dataB64: string, ext: string) =>
     invoke<string>('import_note_image', { dataB64, ext }),
+  /** 读取文本文件（AI 工具专用，Q6）—— 绝对路径 + UTF-8 + 500KB 上限 + 扩展名白名单 */
+  readTextFile: (path: string) => invoke<string>('read_text_file', { path }),
   inspectPath: (path: string) =>
     invoke<{ name: string; is_dir: boolean }>('inspect_path', { path }),
   listTags: () => invoke<Tag[]>('list_tags'),
@@ -1180,10 +1182,17 @@ export const tauriApi = {
     sessionId: number,
     content: string,
     onEvent: (e: ChatStreamEvent) => void,
+    /** 可选 system 提示（Q6：前端 AI 工具调用系统注入） */
+    systemPrompt?: string | null,
   ) => {
     const channel = new Channel<ChatStreamEvent>()
     channel.onmessage = onEvent
-    return invoke<void>('send_chat_message', { sessionId, content, onEvent: channel })
+    return invoke<void>('send_chat_message', {
+      sessionId,
+      content,
+      onEvent: channel,
+      systemPrompt: systemPrompt ?? null,
+    })
   },
   getChatModels: () => invoke<ChatModelConfig[]>('get_chat_models'),
   /** 平台可用模型（「使用平台免费额度」；需登录账号） */
