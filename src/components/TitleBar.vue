@@ -33,7 +33,7 @@ const claudehaloPrimary = computed(() => {
 const claudehaloTitle = computed(() => {
   const s = claudehaloPrimary.value
   if (!s) return '未检测到 ClaudeHalo'
-  return `Claude :${s.port} · ${s.state}`
+  return `Claude PID ${s.pid} · ${s.state}`
 })
 
 function toggleAlwaysOnTop() {

@@ -855,21 +855,25 @@ export interface NetStats {
   interfaces: NetInterface[]
 }
 
-/** ClaudeHalo 单 session 状态（Q2 进度监控） */
-export interface ClaudeHaloStatus {
-  /** 监听端口 (7700 起) */
-  port: number
-  /** Claude Code session id */
-  session_id: string | null
-  /** idle / thinking / working / waiting_input / unknown */
+/** ClaudeHalo 单 session 状态（Q2 进度监控：CLAUDEHALO 抄过来 + 适配多个）
+ *
+ * 状态来源: Toolhelp32 枚举所有 claude.exe PID + 读 %TEMP%\claude-halo-state-{pid}.txt
+ * 状态值: idle / thinking / working / waiting_input / compacting / completed / unknown
+ *   unknown = claude.exe 在跑但状态文件不存在 (Claude Code hook 未配置)
+ */
+export interface ClaudeHaloSession {
+  /** Claude.exe 进程 PID */
+  pid: number
+  /** idle / thinking / working / waiting_input / compacting / completed / unknown */
   state: string
-  /** 主机名 */
-  hostname: string | null
-  /** 工作目录（ClaudeHaloManage 暂未暴露, 留作 Option） */
-  cwd: string | null
-  /** 探测时戳 (毫秒) */
+  /** 状态文件绝对路径（找不到时为 null） */
+  state_file: string | null
+  /** 探测时间戳 (毫秒) */
   detected_at: number
 }
+
+/** 向后兼容别名（旧版本用 ClaudeHaloStatus 名称） */
+export type ClaudeHaloStatus = ClaudeHaloSession
 
 export interface ChatSession {
   id: number
@@ -1184,8 +1188,8 @@ export const tauriApi = {
   getSystemInfo: () => invoke<SystemInfo>('get_system_info'),
   /** 读取各网络接口累计收发字节数（Q1 网速监控，前端做 1s 差值算速率） */
   getNetStats: () => invoke<NetStats>('get_net_stats'),
-  /** 探测所有在跑的 ClaudeHalo instance（Q2 进度监控） */
-  claudehaloGetStatus: () => invoke<ClaudeHaloStatus[]>('claudehalo_get_status'),
+  /** 探测所有在跑的 Claude Code session（Q2 进度监控） */
+  claudehaloGetStatus: () => invoke<ClaudeHaloSession[]>('claudehalo_get_status'),
   listSnippets: () => invoke<Snippet[]>('list_snippets'),
   createSnippet: (title: string, content: string) =>
     invoke<Snippet>('create_snippet', { title, content }),

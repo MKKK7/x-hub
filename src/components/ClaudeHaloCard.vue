@@ -49,6 +49,12 @@ function stateLabel(state: string) {
       return '执行中'
     case 'waiting_input':
       return '等待输入'
+    case 'compacting':
+      return '压缩中'
+    case 'completed':
+      return '已完成'
+    case 'unknown':
+      return '未配 hook'
     default:
       return state
   }
@@ -70,20 +76,20 @@ onMounted(async () => {
     </header>
 
     <div v-if="sessions.length === 0" class="empty">
-      <p class="empty-title">未检测到 ClaudeHalo</p>
-      <p class="empty-sub">启动 ClaudeHaloManage 后将自动出现</p>
+      <p class="empty-title">未检测到 Claude Code</p>
+      <p class="empty-sub">启动 Claude Code 后, 配置 hook 写状态文件即可</p>
     </div>
 
     <ul v-else class="session-list">
-      <li v-for="s in sessions" :key="s.port" class="session-row">
+      <li v-for="s in sessions" :key="s.pid" class="session-row">
         <div class="session-top">
-          <span class="session-port">:{{ s.port }}</span>
+          <span class="session-port">PID {{ s.pid }}</span>
           <span class="session-state" :class="stateClass(s.state)">
             {{ stateLabel(s.state) }}
           </span>
         </div>
-        <p v-if="s.hostname || s.session_id" class="session-meta">
-          {{ s.hostname ?? '' }}<span v-if="s.session_id"> · {{ s.session_id }}</span>
+        <p v-if="s.state_file" class="session-meta" :title="s.state_file">
+          {{ s.state_file }}
         </p>
       </li>
     </ul>
@@ -198,6 +204,14 @@ onMounted(async () => {
 .ch-state-unknown {
   background: var(--bg-card);
   color: var(--text-3);
+}
+.ch-state-compacting {
+  background: var(--c-yellow-soft, rgba(250, 204, 21, 0.18));
+  color: var(--c-yellow-ink, #806600);
+}
+.ch-state-completed {
+  background: var(--c-green-soft, rgba(34, 197, 94, 0.16));
+  color: var(--c-green-ink, #15803d);
 }
 .session-meta {
   font-size: 10px;
