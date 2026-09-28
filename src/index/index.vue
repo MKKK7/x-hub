@@ -552,6 +552,8 @@ onMounted(async () => {
     window.addEventListener('keydown', onChatKeydown)
   }
   await restoreChatPanel()
+  // 点击抽屉外部收起（捕获阶段，覆盖 main-area / 标题栏 / 侧边栏等一切抽屉外区域）
+  document.addEventListener('pointerdown', onDocPointerDown, true)
 })
 
 let unlistenStickies: (() => void) | null = null
@@ -588,6 +590,7 @@ onUnmounted(() => {
   window.removeEventListener('suda-open-web-panel', onSudaWebPanelEvent)
   window.removeEventListener('keydown', onSearchKeydown)
   window.removeEventListener('keydown', onChatKeydown)
+  document.removeEventListener('pointerdown', onDocPointerDown, true)
 })
 
 function hideBootSplash() {
@@ -744,6 +747,26 @@ function onChatKeydown(e: KeyboardEvent) {
     e.preventDefault()
     toggleChat()
   }
+}
+
+// ---- 点击抽屉外部收起（仅内嵌抽屉形态；独立小窗有自己的关闭逻辑）----
+function closeChatDrawer() {
+  if (!chatOpen.value) return
+  chatOpen.value = false
+  persistChatPanelSize()
+}
+
+// 用 pointerdown 的捕获阶段拿「按下」事件，比 click 更早，避免和抽屉内部按钮的
+// click 抢时序。判定：
+//   1) 抽屉内部（输入框/会话菜单/拖拽改尺寸手柄等）→ 不算外部；
+//   2) 标记了 data-chat-opener 的对话入口（标题栏对话按钮）→ 不算外部，
+//      交给它自己的 click 去切换，否则「按下先收起、click 再打开」会互相抵消。
+function onDocPointerDown(e: PointerEvent) {
+  if (!chatOpen.value) return
+  const t = e.target as HTMLElement | null
+  if (!t || typeof t.closest !== 'function') return
+  if (t.closest('.chat-dock') || t.closest('[data-chat-opener]')) return
+  closeChatDrawer()
 }
 
 async function onOpenResource(r: Resource) {
