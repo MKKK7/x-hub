@@ -494,6 +494,29 @@ pub fn reorder_todo_orders(
     Ok(())
 }
 
+/// 跨父拖拽：把子待办改挂到另一个顶级父待办下，并按传入顺序重写目标父下的子项排序。
+/// `ordered_ids` 为目标落点后的完整子项顺序（含被移动项）。
+#[tauri::command]
+pub fn move_todo_child(
+    app: tauri::AppHandle,
+    state: State<'_, DbState>,
+    id: i64,
+    new_parent_id: i64,
+    ordered_ids: Vec<i64>,
+) -> Result<Todo, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let t = todo::move_child(&conn, id, new_parent_id, &ordered_ids)?;
+    drop(conn);
+    let _ = app.emit("todos-changed", ());
+    log::info!(
+        "子待办改挂父级: id={} -> parent={} (目标下 {} 条)",
+        id,
+        new_parent_id,
+        ordered_ids.len()
+    );
+    Ok(t)
+}
+
 // ---------- 待办升级：描述 / 置顶 / 周期 / 标签 ----------
 
 /// 设置待办描述（轻量 Markdown）
@@ -1327,21 +1350,14 @@ pub struct NoteTagRow {
 pub struct AppInfo {
     /// 当前应用版本号（运行时读取打包版本，与 tauri.conf.json 一致）
     pub version: String,
-    /// 完整版本历史 markdown（内置，零网络）
-    pub changelog: String,
-    /// 最新一段版本说明（「What's New」弹窗用）
-    pub latest_section: String,
 }
 
-/// 返回应用版本 + 内置更新日志（版本历史），供「关于」页展示
+/// 返回应用版本号，供「关于」页与扩展市场的最低版本判断使用。
+/// 版本历史不再内置：客户端「关于」页直接跳转 GitHub Releases。
 #[tauri::command]
 pub fn get_app_info(app: tauri::AppHandle) -> Result<AppInfo, String> {
     let version = app.package_info().version.to_string();
-    Ok(AppInfo {
-        version,
-        changelog: crate::about::RELEASE_NOTES.to_string(),
-        latest_section: crate::about::latest_section(),
-    })
+    Ok(AppInfo { version })
 }
 
 // ---------- 配置 ----------

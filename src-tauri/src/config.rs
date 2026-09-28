@@ -621,6 +621,8 @@ const BACKEND_MANAGED_FIELDS: &[&str] = &[
     "skill_roots",
     // 「跳过此版本」：只经 skip_update_version 变更
     "skipped_update_version",
+    // 「稍后再提示」暂停到期时间：只经 snooze_update 变更
+    "update_snooze_until_ms",
     // 已废弃的两个端点字段（v0.6.1）：真相源是内置常量，只由 migrate_legacy_endpoints 归一
     "market_endpoint",
     "update_endpoint",
@@ -653,6 +655,10 @@ pub fn merge_disk_authoritative(merged: &mut AppConfig, disk: &AppConfig) {
     merged.update_endpoint = disk.update_endpoint.clone();
     merged.skill_roots = disk.skill_roots.clone();
     merged.skipped_update_version = disk.skipped_update_version.clone();
+    // 「稍后再提示」到期时间由 snooze_update 命令独占写盘，前端快照里只有启动时的旧值；
+    // 不合并的话，暂停窗口内保存任意设置（save_config 整份快照落盘）都会把它冲回旧值，
+    // 「稍后再提示」被悄悄取消、更新弹窗下一轮自动检查又弹出来
+    merged.update_snooze_until_ms = disk.update_snooze_until_ms;
 }
 
 pub fn save(config: &AppConfig) -> Result<(), String> {
@@ -852,6 +858,7 @@ mod tests {
             dev_mode_enabled: true,
             skill_roots: vec!["E:\\skills-custom".to_string()],
             skipped_update_version: "9.9.9".to_string(),
+            update_snooze_until_ms: 1_893_456_000_000,
             ..AppConfig::default()
         }
     }
@@ -919,6 +926,7 @@ mod tests {
         assert_eq!(merged.dev_mode_enabled, disk.dev_mode_enabled);
         assert_eq!(merged.skill_roots, disk.skill_roots);
         assert_eq!(merged.skipped_update_version, disk.skipped_update_version);
+        assert_eq!(merged.update_snooze_until_ms, disk.update_snooze_until_ms);
     }
 
     /// 清单漏登就是这条红：任何登记在案的名字都必须是 `AppConfig` 真实存在的字段，

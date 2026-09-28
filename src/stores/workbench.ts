@@ -595,15 +595,42 @@ export function useStore() {
   async function updateTodo(id: number, title: string, priority: number) {
     const i = state.todos.findIndex((t) => t.id === id)
     if (i < 0) return null
+    const wasPriority = state.todos[i].priority
+    let updated: Todo
     if (isTauri()) {
-      const updated = await tauriApi.updateTodo(id, title, priority)
+      updated = await tauriApi.updateTodo(id, title, priority)
       state.todos[i] = updated
-      return updated
+    } else {
+      const cur = state.todos[i]
+      updated = { ...cur, title, priority, updated_at: new Date().toISOString() }
+      state.todos[i] = updated
     }
-    const cur = state.todos[i]
-    const updated = { ...cur, title, priority, updated_at: new Date().toISOString() }
-    state.todos[i] = updated
+    // 优先级与「置顶」联动（跟手动置顶同一状态，保证观感与行为一致）：
+    // 切到「紧急」(2) → 自动置顶并排到「置顶」组最前；从紧急降下来 → 取消自动置顶。
+    if (priority === 2 && wasPriority !== 2) await promoteUrgent(id)
+    else if (wasPriority === 2 && priority !== 2) await demoteUrgent(id)
     return updated
+  }
+
+  /**
+   * 优先级切成「紧急」时自动置顶：直接复用 `pinned` 字段（与手动置顶同一状态），
+   * 再把自己的排序位排到「置顶」组最前。只处理未完成的顶级待办（子项 / 已完成不参与）。
+   */
+  async function promoteUrgent(id: number) {
+    const t = state.todos.find((x) => x.id === id)
+    if (!t || t.parent_id != null || t.done) return
+    if (!t.pinned) await setTodoPinned(id, true)
+    const peers = state.todos
+      .filter((x) => x.parent_id == null && !x.done && x.id !== id && x.pinned)
+      .sort(compareByOrder)
+    await assignTodoOrder([id, ...peers.map((x) => x.id)])
+  }
+
+  /** 从「紧急」降级时取消自动置顶（仅当当前处于置顶态，避免无谓写库） */
+  async function demoteUrgent(id: number) {
+    const t = state.todos.find((x) => x.id === id)
+    if (!t || t.parent_id != null || !t.pinned) return
+    await setTodoPinned(id, false)
   }
 
   async function deleteTodo(id: number) {
@@ -640,6 +667,35 @@ export function useStore() {
   /** 拖拽排序落库：前端按分组计算完整顺序后调用 */
   function reorderTodos(ids: number[]) {
     return assignTodoOrder(ids)
+  }
+
+  /**
+   * 跨父拖拽落库：把子待办改挂到另一个顶级父待办，并按 `orderedIds` 重写目标父下的子项排序。
+   * 本地乐观更新（改 parent_id + 目标父下 sort_order），后端失败则整批回滚并抛出，由调用方提示。
+   */
+  async function moveTodoChild(id: number, newParentId: number, orderedIds: number[]) {
+    const snapshot = state.todos.map((t) => ({
+      id: t.id,
+      parent_id: t.parent_id,
+      sort_order: t.sort_order,
+    }))
+    const rank = new Map(orderedIds.map((x, i) => [x, i + 1]))
+    state.todos = state.todos.map((t) => {
+      if (t.id === id) return { ...t, parent_id: newParentId }
+      const r = rank.get(t.id)
+      return r == null ? t : { ...t, sort_order: r }
+    })
+    if (!isTauri()) return
+    try {
+      await tauriApi.moveTodoChild(id, newParentId, orderedIds)
+    } catch (e) {
+      const byId = new Map(snapshot.map((s) => [s.id, s]))
+      state.todos = state.todos.map((t) => {
+        const s = byId.get(t.id)
+        return s ? { ...t, parent_id: s.parent_id, sort_order: s.sort_order } : t
+      })
+      throw e
+    }
   }
 
   /** 待办浮窗等外部修改后刷新列表 */
@@ -1526,6 +1582,7 @@ export function useStore() {
     deleteTodo,
     scheduleTodo,
     reorderTodos,
+    moveTodoChild,
     refreshTodos,
     setTodoDescription,
     setTodoPinned,

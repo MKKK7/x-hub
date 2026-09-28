@@ -1,4 +1,3 @@
-mod about;
 mod account;
 mod api_spec;
 mod autostart;
@@ -611,6 +610,7 @@ pub fn run() {
             commands::delete_todo,
             commands::schedule_todo,
             commands::reorder_todo_orders,
+            commands::move_todo_child,
             commands::set_todo_description,
             commands::set_todo_pinned,
             commands::set_todo_repeat,

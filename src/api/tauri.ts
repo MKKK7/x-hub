@@ -354,8 +354,6 @@ export interface AppConfig {
 
 export interface AppInfo {
   version: string
-  changelog: string
-  latest_section: string
 }
 
 /** AI 对话独立窗口状态（Rust chat_window::chat_window_get_state） */
@@ -985,6 +983,9 @@ export const tauriApi = {
     invoke<Todo>('schedule_todo', { id, dueAt, remindAt }),
   /** 待办拖拽排序：按传入顺序写入手动排序位（前端按分组计算完整顺序） */
   reorderTodoOrders: (ids: number[]) => invoke<void>('reorder_todo_orders', { ids }),
+  /** 跨父拖拽：子待办改挂到另一个顶级父待办，并重写目标父下子项顺序 */
+  moveTodoChild: (id: number, newParentId: number, orderedIds: number[]) =>
+    invoke<Todo>('move_todo_child', { id, newParentId, orderedIds }),
   /** 设置待办描述（轻量 Markdown） */
   setTodoDescription: (id: number, description: string) =>
     invoke<Todo>('set_todo_description', { id, description }),

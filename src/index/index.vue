@@ -765,7 +765,15 @@ function onDocPointerDown(e: PointerEvent) {
   if (!chatOpen.value) return
   const t = e.target as HTMLElement | null
   if (!t || typeof t.closest !== 'function') return
-  if (t.closest('.chat-dock') || t.closest('[data-chat-opener]')) return
+  // 抽屉内部 + 对话入口按钮都不算外部；
+  // 另外两个是 Teleport 到 body 的浮层（会话菜单 / 模型下拉），它们不在 .chat-dock 里，
+  // 但属于对话面板的操作——不豁免的话 pointerdown 会先把抽屉收起，导致「新建/删除对话」点了没反应。
+  if (
+    t.closest('.chat-dock') ||
+    t.closest('[data-chat-opener]') ||
+    t.closest('.cp-menu') ||
+    t.closest('.app-select-menu')
+  ) return
   closeChatDrawer()
 }
 

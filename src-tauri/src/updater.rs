@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 use tauri::Emitter;
 use tauri::Manager;
@@ -48,6 +48,12 @@ const PENDING_FILE: &str = ".pending.json";
 /// 下载互斥标志：同一时刻只允许一个 download_update 在跑。
 /// 并发触发会各自 File::create 截断同一临时文件互踩，必须拒绝而非排队
 static DOWNLOAD_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
+/// 「稍后再提示」补检去重：每点一次递增代数，只有代数仍最新的那个补检任务
+/// 到期才真正执行检查。连点「稍后再提示」时暂停窗口本来就顺延到最后一次点击
+/// （`update_snooze_until_ms` 覆盖写），这里再让旧的补检任务到点后自行退出，
+/// 避免排出一串同一时刻的重复检查。
+static SNOOZE_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// download_update 的守卫：任何退出路径（含 ? / panic 展开）都复位互斥标志
 struct DownloadGuard;
@@ -372,9 +378,16 @@ pub fn snooze_update(app: tauri::AppHandle) -> Result<(), String> {
         cfg.update_snooze_until_ms = now_epoch_ms() + SNOOZE_MINUTES * 60_000;
         crate::config::save(&cfg)?;
     }
+    // 取一个本次点击专属的代数；期间又点了「稍后再提示」的话代数会变大，
+    // 本任务到点后据此直接退出，只留最新一次去补检
+    let generation = SNOOZE_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_secs((SNOOZE_MINUTES * 60) as u64)).await;
+        if SNOOZE_GENERATION.load(Ordering::Acquire) != generation {
+            log::info!("「稍后再提示」期间有更新的点击，本次补检跳过（已由最新那次顺延）");
+            return;
+        }
         if let Ok(info) = check_for_update(handle, None).await {
             log::info!(
                 "「稍后再提示」到期补检：{}",
