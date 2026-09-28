@@ -316,6 +316,15 @@ pub async fn check_for_update(
         log::info!("版本 v{} 已被用户跳过，不再提示", manifest.version);
         return Ok(UpdateInfo::none(&current));
     }
+    // 「稍后再提示」：暂停窗口内自动检查不弹（见 snooze_update；手动检查不受影响）。
+    // 到期后由 snooze_update 安排的补检或 4h 周期循环再次提示。
+    if !manual {
+        let snooze_until = crate::config::load().update_snooze_until_ms;
+        if snooze_until > 0 && now_epoch_ms() < snooze_until {
+            log::info!("更新提示处于「稍后再提示」暂停窗口内，本轮不弹");
+            return Ok(UpdateInfo::none(&current));
+        }
+    }
     let (entry, portable) = match platform_entry(&manifest) {
         Some(p) => p,
         None => {
@@ -342,6 +351,39 @@ pub async fn check_for_update(
     );
     let _ = app.emit("update-available", &info);
     Ok(info)
+}
+
+fn now_epoch_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// 「稍后再提示」：把更新弹窗暂停 30 分钟（写 `update_snooze_until_ms`），到点后
+/// 主动补一次自动检查。为什么补检：静默检查循环是 4h 一跳，不补检的话「稍后」
+/// 实际会变成「最多 4 小时后」。手动检查（About 页）不受暂停窗口影响。
+#[tauri::command]
+pub fn snooze_update(app: tauri::AppHandle) -> Result<(), String> {
+    const SNOOZE_MINUTES: i64 = 30;
+    {
+        let _guard = crate::config::lock();
+        let mut cfg = crate::config::load();
+        cfg.update_snooze_until_ms = now_epoch_ms() + SNOOZE_MINUTES * 60_000;
+        crate::config::save(&cfg)?;
+    }
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs((SNOOZE_MINUTES * 60) as u64)).await;
+        if let Ok(info) = check_for_update(handle, None).await {
+            log::info!(
+                "「稍后再提示」到期补检：{}",
+                if info.available { "仍有更新" } else { "无更新" }
+            );
+        }
+    });
+    log::info!("更新提示已推迟 {} 分钟", SNOOZE_MINUTES);
+    Ok(())
 }
 
 /// 下载可用更新（`check_for_update` 命中后调用）。
