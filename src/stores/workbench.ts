@@ -33,6 +33,8 @@ const IS_MAC_PREVIEW =
 const DEFAULT_GLOBAL_SHORTCUT = IS_MAC_PREVIEW
   ? 'CommandOrControl+Shift+Space'
   : 'Ctrl+Shift+Space'
+const DEFAULT_SEARCH_SHORTCUT = IS_MAC_PREVIEW ? 'CommandOrControl+K' : 'Ctrl+K'
+const DEFAULT_CHAT_SHORTCUT = IS_MAC_PREVIEW ? 'CommandOrControl+Shift+K' : 'Ctrl+Shift+K'
 
 interface StoreState {
   resources: Resource[]
@@ -111,6 +113,8 @@ const state = reactive<StoreState>({
     chat_window_y: null,
     chat_window_pinned: false,
     clipboard_shortcut: IS_MAC_PREVIEW ? 'CommandOrControl+Alt+V' : 'Ctrl+`',
+    search_shortcut: DEFAULT_SEARCH_SHORTCUT,
+    chat_shortcut: DEFAULT_CHAT_SHORTCUT,
     clipboard_max_items: 500,
     clipboard_ttl_days: 7,
     clipboard_paused: false,
@@ -129,10 +133,12 @@ const state = reactive<StoreState>({
     runtime_strategy: 'auto',
     sidebar_extensions: [],
     extension_open_modes: {},
+    extension_link_modes: {},
     run_at_startup: false,
     auto_update_enabled: true,
     update_interval_hours: 4,
     skipped_update_version: '',
+    update_snooze_until_ms: 0,
     floating_ball_enabled: true,
     floating_ball_auto_hide: true,
     floating_ball_with_main: false,
@@ -354,6 +360,13 @@ export function useStore() {
   /** 用指定浏览器打开网页资源（browserExe 来自 listInstalledBrowsers） */
   async function openResourceInBrowser(id: number, browserExe: string) {
     await tauriApi.openUrlWithBrowser(id, browserExe)
+    const r = state.resources.find((x) => x.id === id)
+    if (r) r.last_launched_at = new Date().toISOString()
+  }
+
+  /** 以管理员身份启动「程序」资源（UAC 确认；网页/文件由后端拒绝） */
+  async function launchResourceAsAdmin(id: number) {
+    await tauriApi.launchResourceAsAdmin(id)
     const r = state.resources.find((x) => x.id === id)
     if (r) r.last_launched_at = new Date().toISOString()
   }
@@ -1040,6 +1053,22 @@ export function useStore() {
     return saved
   }
 
+  async function setSearchShortcut(value: string) {
+    state.config.search_shortcut = value
+    if (!isTauri()) return value
+    const saved = await tauriApi.setSearchShortcut(value)
+    state.config.search_shortcut = saved
+    return saved
+  }
+
+  async function setChatShortcut(value: string) {
+    state.config.chat_shortcut = value
+    if (!isTauri()) return value
+    const saved = await tauriApi.setChatShortcut(value)
+    state.config.chat_shortcut = saved
+    return saved
+  }
+
   /** 主页面「中上区块」显示内容：token/notes/todo/resources/countdown */
   async function setDashboardMidContent(value: string) {
     state.config.dashboard_mid_content = value
@@ -1183,6 +1212,14 @@ export function useStore() {
   function setExtensionOpenMode(id: string, mode: string) {
     const modes = state.config.extension_open_modes ?? {}
     state.config.extension_open_modes = { ...modes, [id]: mode }
+    if (!isTauri()) return
+    void tauriApi.saveConfig(state.config)
+  }
+
+  /** 扩展链接打开方式：inapp（应用内浏览器，默认）/ browser（系统默认浏览器） */
+  function setExtensionLinkMode(id: string, mode: string) {
+    const modes = state.config.extension_link_modes ?? {}
+    state.config.extension_link_modes = { ...modes, [id]: mode }
     if (!isTauri()) return
     void tauriApi.saveConfig(state.config)
   }
@@ -1462,6 +1499,7 @@ export function useStore() {
     removeResource,
     reorderResources,
     launchResource,
+    launchResourceAsAdmin,
     openResourceInBrowser,
     refreshSubcategories,
     subcategoriesOf,
@@ -1530,6 +1568,8 @@ export function useStore() {
     setSidebarToggle,
     setAlwaysOnTop,
     setGlobalShortcut,
+    setSearchShortcut,
+    setChatShortcut,
     setDashboardMidContent,
     setDashboardLayout,
     setCountdownSound,
@@ -1547,6 +1587,7 @@ export function useStore() {
     setSidebarExtension,
     setSidebarExtensionBulk,
     setExtensionOpenMode,
+    setExtensionLinkMode,
     setRunAtStartup,
     setFloatingBallEnabled,
     setFloatingBallAutoHide,

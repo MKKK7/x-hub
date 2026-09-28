@@ -153,9 +153,16 @@ const extensionReloadTick = ref(0)
 const installedExtensions = ref<ExtensionEntry[]>([])
 
 function onOpenExtension(ext: ExtensionEntry) {
-  extensionReloadTick.value++
-  openedExtension.value = { id: ext.id, surface: null, name: ext.name }
-  activeView.value = 'extension'
+  // 扩展中心点开扩展 = 按该扩展的「打开方式」打开（设置弹窗里配置，默认 view=软件内）。
+  // view 保持旧的 surface:null（入口按 manifest 默认形态解析），window/drawer 走分流
+  const mode = store.state.config.extension_open_modes?.[ext.id] ?? 'view'
+  if (mode === 'view') {
+    extensionReloadTick.value++
+    openedExtension.value = { id: ext.id, surface: null, name: ext.name }
+    activeView.value = 'extension'
+    return
+  }
+  openExtensionSurface(ext.id, mode)
 }
 
 // ---- 速达「应用内打开网页」：主窗内嵌面板（ADR 0011） ----
@@ -516,6 +523,19 @@ onMounted(async () => {
     unlistenOpenChatSettings = await on('open-chat-settings', () => {
       onOpenChatSettings()
     })
+    // 搜索快捷键（全局注册，Rust 分发）：主窗前端负责打开/关闭搜索弹窗
+    unlistenSearchShortcut = await on('search-shortcut', () => {
+      searchVisible.value = !searchVisible.value
+    })
+    // AI 对话快捷键（全局注册，Rust 分发）：与抽屉/独立窗口形态分流共用 toggleChat
+    unlistenChatShortcut = await on('chat-shortcut', () => {
+      toggleChat()
+    })
+    // 扩展页「去授权」跳转（桥 API xhub.openPermissions）：切到扩展中心并打开该扩展的
+    // 设置弹窗（权限管理所在处）。payload = 扩展 id
+    unlistenOpenExtSettings = await on<string>('open-extension-settings', (e) => {
+      if (e.payload) openExtensionSettings(e.payload)
+    })
     // 形态切换（设置里的开关 / 独立窗侧改动）：切到独立窗口时收起内嵌抽屉，二者互斥
     unlistenChatMode = await on<boolean>('chat-window-mode', (e) => {
       if (e.payload && chatOpen.value) {
@@ -524,8 +544,13 @@ onMounted(async () => {
       }
     })
   }
-  window.addEventListener('keydown', onSearchKeydown)
-  window.addEventListener('keydown', onChatKeydown)
+  // 浏览器预览没有全局快捷键：保留应用内 Ctrl+K / Ctrl+Shift+K 兜底。
+  // 桌面端一律走全局注册 + 事件分发（在这里注册应用内监听会与全局事件双触发、
+  // 两次 toggle 相互抵消，表现为「按了没反应」）
+  if (!isTauri()) {
+    window.addEventListener('keydown', onSearchKeydown)
+    window.addEventListener('keydown', onChatKeydown)
+  }
   await restoreChatPanel()
 })
 
@@ -539,6 +564,9 @@ let unlistenTodoTagsChanged: (() => void) | null = null
 let unlistenTodoRemind: (() => void) | null = null
 let unlistenBallAction: (() => void) | null = null
 let unlistenOpenChatSettings: (() => void) | null = null
+let unlistenSearchShortcut: (() => void) | null = null
+let unlistenChatShortcut: (() => void) | null = null
+let unlistenOpenExtSettings: (() => void) | null = null
 let unlistenChatMode: (() => void) | null = null
 
 onUnmounted(() => {
@@ -553,6 +581,9 @@ onUnmounted(() => {
   unlistenTodoRemind?.()
   unlistenBallAction?.()
   unlistenOpenChatSettings?.()
+  unlistenSearchShortcut?.()
+  unlistenChatShortcut?.()
+  unlistenOpenExtSettings?.()
   unlistenChatMode?.()
   window.removeEventListener('suda-open-web-panel', onSudaWebPanelEvent)
   window.removeEventListener('keydown', onSearchKeydown)
@@ -676,6 +707,17 @@ function onOpenExtensionsView() {
 function onOpenSkillsSettings() {
   settingsSection.value = 'skills'
   activeView.value = 'settings'
+}
+
+// ---- 扩展设置弹窗跳转（扩展页 xhub.openPermissions 的「去授权」落点） ----
+// ExtensionCenter 不在 DOM 时（正看某个扩展的 view）无法直接弹它的设置弹窗：
+// 这里切到扩展中心，把「要打开哪个扩展的设置」经 prop 递进去，列表加载完即弹。
+const extensionSettingsJump = ref<{ id: string; nonce: number } | null>(null)
+let extensionSettingsNonce = 0
+
+function openExtensionSettings(extId: string) {
+  extensionSettingsJump.value = { id: extId, nonce: ++extensionSettingsNonce }
+  if (activeView.value !== 'extensions') activeView.value = 'extensions'
 }
 
 async function restoreChatPanel() {
@@ -933,6 +975,7 @@ provide('showToast', showToast)
         <!-- 扩展中心：独立视图 -->
         <section v-else-if="activeView === 'extensions'" class="view view-extensions" tabindex="-1" aria-label="扩展中心">
           <ExtensionCenter
+            :jump-settings="extensionSettingsJump"
             @open="onOpenExtension"
             @open-surface="(ext, surface) => openExtensionSurface(ext.id, surface)"
             @changed="onExtensionsChanged"
