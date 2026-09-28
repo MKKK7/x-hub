@@ -193,7 +193,7 @@ async function confirmUninstall() {
         >
           <header class="es-head">
             <div class="es-head-left">
-              <div class="es-icon" :style="{ background: accent?.soft }">
+              <div class="es-icon" :style="ext.icon ? {} : { background: accent?.soft }">
                 <img
                   v-if="ext.icon"
                   :src="iconSrc(ext.icon)"

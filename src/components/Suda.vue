@@ -801,7 +801,6 @@ function cardAccentStyle(r: Resource) {
   height: 46px;
   border-radius: 14px;
   object-fit: contain;
-  background: var(--bg-card);
 }
 .suda-name {
   display: inline-flex;

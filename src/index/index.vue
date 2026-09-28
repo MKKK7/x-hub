@@ -842,7 +842,7 @@ provide('showToast', showToast)
             type="button"
             @click="openSidebarExtension(ext)"
           >
-            <span class="sidebar-nav-icon" aria-hidden="true">
+            <span class="sidebar-nav-icon" :class="{ 'has-img': !!ext.icon }" aria-hidden="true">
               <img
                 v-if="ext.icon"
                 class="sidebar-ext-img"
@@ -1261,10 +1261,14 @@ html[data-wallpaper='1'] .title-bar [data-tip]::after {
   text-transform: uppercase;
   color: var(--text-3);
 }
-/* 扩展图标：统一「应用图标」质感——中性软底 + 细描边 + 内边距，与主导航线形图标视觉协调 */
+/* 扩展图标：无图回退（Puzzle）才用中性软底 + 细描边；有图时不加任何托底，按图片原样显示 */
 .sidebar-ext .sidebar-nav-icon {
   background: var(--bg-card-soft);
   box-shadow: inset 0 0 0 1px var(--border-soft);
+}
+.sidebar-ext .sidebar-nav-icon.has-img {
+  background: transparent;
+  box-shadow: none;
 }
 .sidebar-ext-img {
   width: 100%;

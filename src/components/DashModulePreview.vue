@@ -1547,7 +1547,6 @@ html[data-theme='dark'] .dpv {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  background: var(--bg-card);
 }
 .rb-initial {
   font-size: calc(17 * var(--u));

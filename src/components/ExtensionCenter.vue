@@ -735,7 +735,7 @@ function onMore(e: ExtensionEntry) {
           @click="onRowClick(e)"
           @keydown.enter="onRowClick(e)"
         >
-          <div class="ec-icon" :style="{ background: accentFor(e).soft }">
+          <div class="ec-icon" :style="showImg(e) ? {} : { background: accentFor(e).soft }">
             <img
               v-if="showImg(e)"
               :src="iconSrc(e.icon!)"
@@ -855,7 +855,7 @@ function onMore(e: ExtensionEntry) {
           @click="onDevRowClick(d)"
           @keydown.enter="onDevRowClick(d)"
         >
-          <div class="ec-icon" :style="{ background: devAccent(d).soft }">
+          <div class="ec-icon" :style="devEntryFor(d)?.icon ? {} : { background: devAccent(d).soft }">
             <img
               v-if="devEntryFor(d)?.icon"
               :src="iconSrc(devEntryFor(d)!.icon!)"
@@ -966,7 +966,7 @@ function onMore(e: ExtensionEntry) {
           <div v-for="m in market" :key="m.id" class="ec-mcard">
             <div class="ec-mcard-head">
               <div class="ec-mcard-title">
-                <span class="ec-mcard-icon" :style="{ background: accentOf(m.name).soft }">
+                <span class="ec-mcard-icon" :style="m.icon && !marketFailedIcons.has(m.id) ? {} : { background: accentOf(m.name).soft }">
                   <img
                     v-if="m.icon && !marketFailedIcons.has(m.id)"
                     :src="m.icon"
