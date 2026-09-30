@@ -1,3 +1,11 @@
+<script lang="ts">
+// jumpSettings 的消费水位（已处理到的 nonce）。必须放模块级，不能是 setup 内的 let：
+// 本组件挂在 v-else-if 下，离开扩展中心即卸载、回来即重挂载，实例级变量每次归零后会把
+// 宿主遗留的旧跳转请求（index.vue 的 extensionSettingsJump 消费后从不清回 null）当成
+// 新请求重新消费——表现为「每次回到扩展中心都重弹一次该扩展的设置弹窗」。
+let handledJumpNonce = -1
+</script>
+
 <script setup lang="ts">
 import { computed, inject, onMounted, ref, watch } from 'vue'
 import { open } from '@tauri-apps/plugin-dialog'
@@ -39,8 +47,6 @@ const props = defineProps<{
   /** { 扩展 id, 递增序号 }：nonce 变化即一次新请求；null = 无待处理请求 */
   jumpSettings?: { id: string; nonce: number } | null
 }>()
-
-let handledJumpNonce = -1
 
 function tryOpenJumpedSettings() {
   const j = props.jumpSettings

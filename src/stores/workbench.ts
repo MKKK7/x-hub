@@ -131,6 +131,7 @@ const state = reactive<StoreState>({
     font_todo: 1,
     note_editor_mode: 'wysiwyg',
     runtime_strategy: 'auto',
+    service_auto_trust: false,
     sidebar_extensions: [],
     extension_open_modes: {},
     extension_link_modes: {},
@@ -560,6 +561,8 @@ export function useStore() {
     // 以 [新条目, ...组内原序] 整组重写排序位，让新建条目维持「新的在最上」直觉；
     // 组内全部未排序则不用管，创建时间倒序天然置顶。批量创建（序号拆分）并发补值
     // 出现的次序抖动与原有「新条目置顶、组内倒序」默认行为一致。
+    // 置顶条目经 groupOf 独立成「置顶」组，不会出现在日期组的 peers 里——
+    // 新建（未置顶）条目的补位永远排不到置顶条目上面。
     if (isTauri() && t.parent_id == null) {
       const now = new Date()
       const group = groupOf(t, now)
@@ -1246,6 +1249,14 @@ export function useStore() {
     await tauriApi.saveConfig(state.config)
   }
 
+  /** 全局自动信任 service 扩展：新装/更新版本无需逐个「去授权」即可运行本地后端。
+   *  单独关掉某扩展后端的选择仍优先于本开关（后端 permission_granted 判定） */
+  async function setServiceAutoTrust(enabled: boolean) {
+    state.config.service_auto_trust = enabled
+    if (!isTauri()) return
+    await tauriApi.saveConfig(state.config)
+  }
+
   /** 固定/取消固定扩展到左侧栏：点击侧栏菜单即在主区打开对应扩展（view 形态） */
   function setSidebarExtension(id: string, pinned: boolean) {
     const cur = state.config.sidebar_extensions ?? []
@@ -1641,6 +1652,7 @@ export function useStore() {
     setModuleFontScale,
     setNoteEditorMode,
     setRuntimeStrategy,
+    setServiceAutoTrust,
     setSidebarExtension,
     setSidebarExtensionBulk,
     setExtensionOpenMode,

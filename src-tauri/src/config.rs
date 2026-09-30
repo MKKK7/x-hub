@@ -203,6 +203,11 @@ pub struct AppConfig {
     /// service 扩展运行时策略：auto（自动检测，默认）/ builtin（始终内置）/ system（始终系统）
     #[serde(default = "default_runtime_strategy")]
     pub runtime_strategy: String,
+    /// 全局自动信任 service 扩展（默认关闭）：开启后新装/更新版本的 service 扩展无需逐个
+    /// 「去授权」即可运行本地后端。⚠️ 显式拒绝优先：某扩展在弹窗里被用户单独关掉
+    /// 「运行本地后端」时，即使本开关开着也不放行（见 extension::permission_granted）
+    #[serde(default)]
+    pub service_auto_trust: bool,
     /// 固定到左侧栏的扩展 id 列表（点击侧栏菜单即在主区打开对应扩展）
     #[serde(default)]
     pub sidebar_extensions: Vec<String>,
@@ -457,6 +462,7 @@ impl Default for AppConfig {
             font_todo: 1.0,
             note_editor_mode: default_note_editor_mode(),
             runtime_strategy: "auto".to_string(),
+            service_auto_trust: false,
             sidebar_extensions: Vec::new(),
             extension_open_modes: std::collections::HashMap::new(),
             extension_link_modes: std::collections::HashMap::new(),

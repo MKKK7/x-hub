@@ -321,6 +321,8 @@ export interface AppConfig {
   note_editor_mode: string
   /** service 扩展运行时策略：auto / builtin / system */
   runtime_strategy: string
+  /** 全局自动信任 service 扩展（默认关）：开启后新装/更新的 service 扩展无需逐个「去授权」 */
+  service_auto_trust: boolean
   /** 固定到左侧栏的扩展 id 列表（点击侧栏菜单即在主区打开对应扩展） */
   sidebar_extensions: string[]
   /** 扩展「默认打开方式」映射：extId → view / window / drawer（未设置时侧栏点击默认 view） */

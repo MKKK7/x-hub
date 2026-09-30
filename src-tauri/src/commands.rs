@@ -189,7 +189,10 @@ pub fn launch_resource(state: State<'_, DbState>, id: i64) -> Result<(), String>
     let res = resource::get(&conn, id).map_err(err_str)?;
     match res.kind {
         ResourceKind::App => {
-            // 程序已在运行 → 只把已有窗口调度到前台，不再拉起第二个实例。
+            // 程序已在运行且有可见（含最小化）窗口 → 只把已有窗口调度到前台，不再拉起第二个
+            // 实例。窗口全隐藏（托盘挂后台，如微信/WorkBuddy）时 activate_existing 返回 false，
+            // 照常启动 exe——应用自带的单实例逻辑会把主窗正规唤起（外部 SW_SHOW 隐藏窗只会
+            // 得到点不动/不重绘的空壳，实测记录见 process.rs）。
             // 带参数的资源仍按原样启动：参数往往就是「这次要打开的东西」（如 --incognito、
             // 要打开的文件夹），忽略它会丢语义。
             let no_args = res.args.as_deref().map(|a| a.trim().is_empty()).unwrap_or(true);
