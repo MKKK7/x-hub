@@ -36,6 +36,15 @@ function onRuntimeStrategyChange(value: string) {
   })
 }
 
+/** 全局自动信任 service 扩展：开启后新装/更新的 service 扩展不再弹「去授权」 */
+function onToggleAutoTrust() {
+  const next = !store.state.config.service_auto_trust
+  void store.setServiceAutoTrust(next).then(
+    () => showToast(next ? '已开启自动信任：新装或更新的 service 扩展可直接运行' : '已关闭自动信任，之后按单个扩展逐个确认'),
+    () => showToast('保存失败，请重试'),
+  )
+}
+
 // ---- 我的扩展（只为显示已添加几个目录；增删都在扩展中心） ----
 const devMode = ref<DevModeStatus>({ enabled: true, extensions: [] })
 
@@ -72,6 +81,28 @@ onMounted(() => {
             />
           </div>
 
+          <!-- 统一授权：免掉「每个新装 service 扩展都要去授权一次」的重复动作。
+               安全语义：本地后端不受沙箱隔离，描述里必须把代价说清；单独关掉某扩展后端仍优先于本开关 -->
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-name">自动信任 service 扩展</span>
+              <span class="setting-desc">
+                开启后新装或更新版本的 service 扩展无需逐个「去授权」即可运行本地后端。⚠️ 本地后端可读取你有权限访问的文件并联网、不受系统沙箱隔离，请仅在你信任扩展来源时开启；单独关掉某扩展「运行本地后端」的选择始终优先于本开关
+              </span>
+            </div>
+            <button
+              class="toggle"
+              role="switch"
+              type="button"
+              :aria-checked="store.state.config.service_auto_trust"
+              aria-label="自动信任 service 扩展"
+              :class="{ on: store.state.config.service_auto_trust }"
+              @click="onToggleAutoTrust"
+            >
+              <span class="toggle-knob"></span>
+            </button>
+          </div>
+
           <!-- 我的扩展的入口指路：目录增删都在扩展中心，这里只留一句话 + 一键跳过去 -->
           <div class="setting-row">
             <div class="setting-info">
@@ -80,7 +111,7 @@ onMounted(() => {
                 {{ devMode.extensions.length ? `已添加 ${devMode.extensions.length} 个本机源码目录` : '还没有添加本机源码目录' }}（须含 manifest.json）。添加后立即加载、改代码即重载，可先在本机调试；发布需要开发者认证 —— 增删都在扩展中心「我的扩展」标签页
               </span>
             </div>
-            <button class="ghost-btn data-btn" type="button" @click="emit('open-extensions')">
+            <button class="ghost-btn data-btn ext-entry-btn" type="button" @click="emit('open-extensions')">
               <Puzzle :size="14" :stroke-width="2" />
               打开扩展中心
             </button>
@@ -101,5 +132,12 @@ onMounted(() => {
 }
 .dev-hint b {
   color: var(--text-1);
+}
+/* 「打开扩展中心」按钮：左侧长描述会把行内剩余宽度挤到很小，按钮被压缩后
+   图标和文字会折行成两行——锁死单行（不收缩、不换行），保证图标 + 文字一行排布 */
+.ext-entry-btn {
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 </style>
