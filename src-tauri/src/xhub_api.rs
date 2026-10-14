@@ -2281,6 +2281,7 @@ mod tests {
             open_in: vec![],
             entry: Default::default(),
             permissions: vec!["data:read".into()],
+            category: None,
             requires: vec![],
             depends_on: vec![],
             disabled: None,
