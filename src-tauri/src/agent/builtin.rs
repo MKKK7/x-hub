@@ -1,4 +1,4 @@
-//! 内置工具（计划 §5 全量 30 个 + 0.9.0 新增 create_subcategory：读 12 / 写 14 / 危险 5）。
+//! 内置工具（§5 全量 30 个 + 0.9.0 新增 create_subcategory 与 get_snippet，共 32：读 13 / 写 14 / 危险 5）。
 //!
 //! 统一口径：
 //! - **名称匹配失败语义**：`create_note` 的 folder/tags、`create_resource` 的 category
@@ -407,13 +407,27 @@ impl AgentTool for GetStickies {
 struct ListSnippets;
 impl AgentTool for ListSnippets {
     fn name(&self) -> &'static str { "list_snippets" }
-    fn description(&self) -> &'static str { "列提示词百宝箱（返回置顶态与标题，不含正文——需要改动用 update_snippet）。" }
+    fn description(&self) -> &'static str { "列提示词百宝箱（返回置顶态与标题，不含正文——需要正文用 get_snippet，需要改动用 update_snippet）。" }
     fn level(&self) -> Level { Level::Read }
     fn parameters(&self) -> Value { json!({"type":"object","properties":{}}) }
     fn execute(&self, _args: &Value, ctx: ToolCtx) -> ToolOutcome {
         let list = match repo::snippet::list(ctx.conn) { Ok(s) => s, Err(e) => return db_err(e) };
         let lines: Vec<String> = list.iter().map(|s: &Snippet| format!("{}[{}] {}", if s.is_pinned { "📌" } else { "" }, s.id, s.title)).collect();
         ToolOutcome::ok(format!("共 {} 条", lines.len()), cap_lines(lines))
+    }
+}
+
+struct GetSnippet;
+impl AgentTool for GetSnippet {
+    fn name(&self) -> &'static str { "get_snippet" }
+    fn description(&self) -> &'static str { "读单条提示词的完整正文。id 来自 list_snippets；配合用户要求把某条提示词套用到给定内容。" }
+    fn level(&self) -> Level { Level::Read }
+    fn parameters(&self) -> Value { json!({"type":"object","properties":{"snippet_id":{"type":"integer","description":"提示词 id"}},"required":["snippet_id"]}) }
+    fn execute(&self, args: &Value, ctx: ToolCtx) -> ToolOutcome {
+        let Some(id) = arg_i64(args, "snippet_id") else { return ToolOutcome::err("缺少 snippet_id 参数", String::new()) };
+        let s = match repo::snippet::get(ctx.conn, id) { Ok(s) => s, Err(_) => return ToolOutcome::err(format!("提示词 {id} 不存在"), String::new()) };
+        let meta = format!("《{}》{} 使用 {} 次", s.title, if s.is_pinned { "置顶" } else { "" }, s.copy_count);
+        ToolOutcome::ok(format!("已读取《{}》", s.title), format!("{meta}\n\n{}", cap_chars(&s.content, MAX_TEXT)))
     }
 }
 
@@ -1088,7 +1102,7 @@ impl AgentTool for LaunchResource {
 
 /// 注册全部 31 个内置工具（顺序稳定——tools 数组随每次请求下发，勿乱序）
 pub fn register_all(reg: &mut ToolRegistry) {
-    // 读 12
+    // 读 13
     reg.register(Box::new(ListTodos));
     reg.register(Box::new(SearchNotes));
     reg.register(Box::new(GetNote));
@@ -1097,6 +1111,7 @@ pub fn register_all(reg: &mut ToolRegistry) {
     reg.register(Box::new(ListCountdowns));
     reg.register(Box::new(GetStickies));
     reg.register(Box::new(ListSnippets));
+    reg.register(Box::new(GetSnippet));
     reg.register(Box::new(ReadClipboard));
     reg.register(Box::new(GlobalSearch));
     reg.register(Box::new(GetWeather));
@@ -1135,11 +1150,11 @@ mod tests {
     }
 
     #[test]
-    fn registers_exactly_31_tools() {
+    fn registers_exactly_32_tools() {
         let r = reg();
-        assert_eq!(r.len(), 31, "§5 全量 30 个 + 0.9.0 create_subcategory");
+        assert_eq!(r.len(), 32, "§5 全量 30 个 + 0.9.0 create_subcategory + get_snippet");
         let read = r.available(crate::agent::approval::PermissionMode::ReadOnly).len();
-        assert_eq!(read, 12, "读 12 个");
+        assert_eq!(read, 13, "读 13 个");
     }
 
     /// 0.9.0 审查回归：LLM 输出的分钟数/时间戳是不可信输入——超界必须明确拒绝，
@@ -1249,6 +1264,18 @@ mod tests {
         assert!(!out.ok, "文件夹匹配失败应报错");
         let after = repo::note::get(&conn, n.id).unwrap();
         assert_eq!(after.title, "原标题", "报错时标题不能已被改动");
+    }
+
+    /// 0.9.0 新增 get_snippet：按 id 取提示词正文；不存在的 id 明确报错
+    #[test]
+    fn get_snippet_returns_content_and_errors_on_missing() {
+        let conn = crate::db::init_in_memory().unwrap();
+        let s = repo::snippet::create(&conn, "写作润色", "请把下面的文字改写得更简洁：").unwrap();
+        let out = GetSnippet.execute(&json!({ "snippet_id": s.id }), ToolCtx { conn: &conn });
+        assert!(out.ok, "{}", out.summary);
+        assert!(out.detail.contains("请把下面的文字改写得更简洁"), "正文要完整返回：{}", out.detail);
+        let miss = GetSnippet.execute(&json!({ "snippet_id": 99999 }), ToolCtx { conn: &conn });
+        assert!(!miss.ok);
     }
 
     /// 0.9.0 审查回归：get_setting 只放行白名单键——chat_models 等敏感配置不外发
