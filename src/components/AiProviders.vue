@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from 'vue'
-import { ChevronDown, Copy, Eye, EyeOff, FlaskConical, ListPlus, Pencil, Plus, Trash2, X } from 'lucide-vue-next'
-import { PLATFORM_ENTRY_NAME, isPlatformModel, isTauri, tauriApi, type ChatModelConfig } from '../api/tauri'
+import { ChevronDown, Copy, ExternalLink, Eye, EyeOff, FlaskConical, ListPlus, Pencil, Plus, Trash2, X } from 'lucide-vue-next'
+import { PLATFORM_ENTRY_NAME, isPlatformModel, isTauri, tauriApi, type ChatModelConfig, type ProviderPreset } from '../api/tauri'
+import AppSelect from './AppSelect.vue'
 import { useStore } from '../stores/workbench'
 
 const showToast = inject<(msg: string) => void>('showToast', () => {})
@@ -25,6 +26,8 @@ interface ProviderEdit {
   savedKey: string
   keyVisible: boolean
   editingKey: boolean
+  /** 点选预设带出的「获取 Key」指引页（空 = 不显示入口；手动填写的供应商没有） */
+  keyGuide: string
 }
 
 const providers = ref<ProviderEdit[]>([])
@@ -163,6 +166,7 @@ function toProvider(m: ChatModelConfig): ProviderEdit {
     savedKey: '',
     keyVisible: false,
     editingKey: false,
+    keyGuide: '',
   }
 }
 
@@ -229,7 +233,17 @@ function addProvider() {
     savedKey: '',
     keyVisible: false,
     editingKey: false,
+    keyGuide: '',
   })
+}
+
+/** 点选预设：填名称/地址 + 带出 Key 指引，备注就地展示（#t47）。只填空卡片，不覆盖已填内容 */
+function applyPreset(p: ProviderEdit, preset: ProviderPreset) {
+  p.providerName = preset.name
+  p.baseUrl = preset.baseUrl
+  p.keyGuide = preset.keyGuideUrl
+  p.msg = preset.note
+  syncProviderFields(p)
 }
 
 function removeProvider(index: number) {
@@ -516,9 +530,76 @@ async function saveAll() {
 
 onMounted(() => {
   void loadProviders()
+  void loadPresets()
+  // 权限与个性化：从持久化配置读初始值（#t47）
+  agentPermMode.value = normalizePermMode(store.state.config.agent_permission_mode)
+  agentPromptOnDangerous.value = !!store.state.config.agent_prompt_on_dangerous
+  agentAboutMe.value = store.state.config.agent_about_me ?? ''
 })
 
 defineExpose({ reload: () => void loadProviders() })
+
+// ---- AI 助手权限与个性化（#t47：Rust send_agent_message 缺省回落这套持久化值） ----
+const AGENT_PERM_OPTIONS = [
+  { value: 'readonly', label: '仅可查看' },
+  { value: 'ask', label: '每次都问' },
+  { value: 'full', label: '完全权限' },
+] as const
+type AgentPermMode = (typeof AGENT_PERM_OPTIONS)[number]['value']
+
+const agentPermMode = ref<AgentPermMode>('ask')
+const agentPromptOnDangerous = ref(false)
+const agentAboutMe = ref('')
+const agentSaving = ref(false)
+
+function normalizePermMode(v: string | undefined): AgentPermMode {
+  return v === 'readonly' || v === 'full' ? v : 'ask'
+}
+
+/** 权限档下拉换值：归一后即时落盘（约定 30：下拉一律 AppSelect，禁原生 select） */
+function onPermSelect(v: string) {
+  agentPermMode.value = normalizePermMode(v)
+  void saveAgentSettings({ agent_permission_mode: agentPermMode.value })
+}
+
+/// 即时落盘（select/toggle 点下就存）；textarea 走失焦保存，避免每个按键都写盘
+async function saveAgentSettings(patch: Parameters<typeof store.setAgentSettings>[0]) {
+  agentSaving.value = true
+  try {
+    await store.setAgentSettings(patch)
+  } catch (e) {
+    showToast(`保存失败：${String(e)}`)
+  } finally {
+    agentSaving.value = false
+  }
+}
+
+// ---- 供应商预设（#t47：后台可配；未登录/接口挂了回落内置清单，不阻塞配置） ----
+const PRESET_FALLBACK: ProviderPreset[] = [
+  { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', keyGuideUrl: 'https://platform.deepseek.com/api_keys', note: '深度求索官方 API，性价比高' },
+  { name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', keyGuideUrl: 'https://platform.openai.com/api-keys', note: '' },
+  { name: 'Moonshot 月之暗面', baseUrl: 'https://api.moonshot.cn/v1', keyGuideUrl: 'https://platform.moonshot.cn/console/api-keys', note: '' },
+  { name: '阿里云百炼', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', keyGuideUrl: 'https://bailian.console.aliyun.com/?apiKey=1', note: '通义千问系列，国内直连' },
+  { name: 'Ollama（本机）', baseUrl: 'http://localhost:11434/v1', keyGuideUrl: '', note: '本机模型，无需 API Key' },
+]
+
+const presets = ref<ProviderPreset[]>(PRESET_FALLBACK)
+
+async function loadPresets() {
+  if (!isTauri()) return
+  try {
+    const list = await tauriApi.platformProviderPresets()
+    if (list.length) presets.value = list
+  } catch {
+    // 未登录 / 网络失败：保持内置清单，不打扰用户
+  }
+}
+
+/// 「获取 Key」指引页走系统浏览器（设置页内嵌跳转没有必要，也更安全）
+function openGuide(url: string) {
+  if (!url) return
+  void tauriApi.openExternal(url).catch(() => showToast('无法打开浏览器，请手动复制链接'))
+}
 </script>
 
 <template>
@@ -546,6 +627,54 @@ defineExpose({ reload: () => void loadProviders() })
       </button>
     </div>
 
+    <!-- Agent 权限与个性化（#t47）：send_agent_message 未带快捷档时回落这套默认值 -->
+    <div class="setting-row ap-agent">
+      <div class="setting-info">
+        <span class="setting-name">AI 助手默认权限档</span>
+        <span class="setting-desc">对话框里随时可切；这里决定每次打开时的初始档位</span>
+      </div>
+      <AppSelect
+        class="ap-perm-select"
+        :model-value="agentPermMode"
+        :options="AGENT_PERM_OPTIONS.map((o) => ({ value: o.value, label: o.label, group: '' }))"
+        :menu-min-width="132"
+        aria-label="AI 助手默认权限档"
+        :title="`AI 助手默认权限档：${AGENT_PERM_OPTIONS.find((o) => o.value === agentPermMode)?.label ?? ''}`"
+        @update:model-value="onPermSelect"
+      />
+    </div>
+    <div v-if="agentPermMode === 'full'" class="setting-row ap-agent-sub">
+      <div class="setting-info">
+        <span class="setting-name">危险操作仍需确认</span>
+        <span class="setting-desc">开启后完全权限档下删除类、启动类操作仍会弹确认（默认关：完全权限 = 风险自担）</span>
+      </div>
+      <button
+        class="toggle"
+        role="switch"
+        type="button"
+        :aria-checked="agentPromptOnDangerous"
+        :class="{ on: agentPromptOnDangerous }"
+        :disabled="agentSaving"
+        @click="agentPromptOnDangerous = !agentPromptOnDangerous; saveAgentSettings({ agent_prompt_on_dangerous: agentPromptOnDangerous })"
+      >
+        <span class="toggle-knob"></span>
+      </button>
+    </div>
+    <div class="setting-row ap-agent-sub">
+      <div class="setting-info ap-about">
+        <span class="setting-name">关于我</span>
+        <span class="setting-desc">给 AI 的自画像（职业、偏好、常用上下文），对话时作为系统提示注入；留空不注入</span>
+        <textarea
+          v-model="agentAboutMe"
+          class="field-input ap-about-input"
+          rows="3"
+          maxlength="1000"
+          placeholder="如：我是后端工程师，常用 Go 和 TypeScript，回答偏简洁，给命令时用 PowerShell…"
+          @blur="saveAgentSettings({ agent_about_me: agentAboutMe })"
+        ></textarea>
+      </div>
+    </div>
+
     <!-- 只有「还没有内容」时才让占位顶掉列表：已有卡片时的刷新一律静默，避免整块闪一下 -->
     <div v-if="loading && providers.length === 0" class="ai-loading">加载中…</div>
 
@@ -570,6 +699,20 @@ defineExpose({ reload: () => void loadProviders() })
 
         <!-- 展开体：编辑 + 获取模型 + 模型列表 -->
         <div v-if="p.expanded" class="prov-body">
+          <!-- 供应商预设（#t47：后台可配；只对全新空卡片显示，不覆盖已填内容） -->
+          <div v-if="!p.models.length && !p.baseUrl.trim()" class="preset-row">
+            <span class="preset-label">快速填充</span>
+            <button
+              v-for="ps in presets"
+              :key="ps.name"
+              class="preset-chip"
+              type="button"
+              :title="ps.note || ps.baseUrl"
+              @click="applyPreset(p, ps)"
+            >
+              {{ ps.name }}
+            </button>
+          </div>
           <div class="ai-field">
             <label class="ai-label">供应商名称</label>
             <input v-model="p.providerName" class="field-input" placeholder="如 DeepSeek" @input="syncProviderFields(p)" />
@@ -622,6 +765,10 @@ defineExpose({ reload: () => void loadProviders() })
                 {{ p.busy ? '获取中…' : '获取模型' }}
               </button>
             </div>
+            <!-- 预设带出的「获取 Key」指引：走系统浏览器（#t47） -->
+            <a v-if="p.keyGuide" class="key-guide" :href="p.keyGuide" @click.prevent="openGuide(p.keyGuide)">
+              <ExternalLink :size="12" /> 获取 {{ p.providerName || '该平台' }} API Key
+            </a>
           </div>
 
           <p v-if="p.msg" class="prov-msg" :class="{ ok: p.msg.startsWith('连通正常') || p.msg.startsWith('已添加') || p.msg.startsWith('获取到') }">{{ p.msg }}</p>
@@ -702,6 +849,75 @@ defineExpose({ reload: () => void loadProviders() })
 .ap-platform .setting-info {
   flex: 1;
   min-width: 0;
+}
+
+/* ---- Agent 权限与个性化（#t47） ---- */
+.ap-agent {
+  margin: 0 0 4px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.ap-perm-select {
+  width: 132px;
+  flex-shrink: 0;
+}
+.ap-agent-sub {
+  padding: 0 0 12px;
+}
+.ap-about {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ap-about-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 64px;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+/* ---- 供应商预设 chips（#t47） ---- */
+.preset-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.preset-label {
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+.preset-chip {
+  padding: 3px 10px;
+  font-size: 0.75rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.preset-chip:hover {
+  border-color: color-mix(in srgb, var(--brand-500) 45%, transparent);
+  color: var(--text-1);
+}
+
+/* 预设带出的「获取 Key」指引链接（系统浏览器打开） */
+.key-guide {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  font-size: 0.75rem;
+  color: var(--brand-500);
+  text-decoration: none;
+}
+.key-guide:hover {
+  text-decoration: underline;
 }
 
 .ai-intro {

@@ -585,11 +585,11 @@ onBeforeUnmount(() => {
 
             <div class="setting-row">
               <div class="setting-info">
-                <span class="setting-name">AI 额度</span>
+                <span class="setting-name">AI 额度（积分）</span>
                 <span class="setting-desc">
                   {{
                     account.inviteRedeemed
-                      ? `剩余 ${account.quotaRemaining} 次（共 ${account.quotaTotal} 次）`
+                      ? `剩余 ${account.creditsRemaining} 积分（共 ${account.creditsTotal} 积分）· 约合 ${account.quotaRemaining} 次`
                       : '尚未兑换邀请码，当前没有额度'
                   }}
                 </span>

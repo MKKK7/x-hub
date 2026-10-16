@@ -105,6 +105,15 @@ pub struct AppConfig {
     /// 联网功能总开关（默认开启）：有网显示在线内容、无网自动隐藏；关闭后完全不发起网络请求
     #[serde(default = "default_true")]
     pub online_enabled: bool,
+    /// Agent 权限三档（#t47）：readonly / ask / full；对话框可临时切换，这里是持久默认档
+    #[serde(default = "default_agent_permission_mode")]
+    pub agent_permission_mode: String,
+    /// 「AI 助手 → 关于我」：用户自填档案，agent system prompt 只读注入（空 = 整段省略，计划 §4）
+    #[serde(default)]
+    pub agent_about_me: String,
+    /// 完全权限档下危险操作仍逐次提示（子开关，默认关；2026-10-13 拍板：完全权限=风险自担）
+    #[serde(default)]
+    pub agent_prompt_on_dangerous: bool,
     /// 隐藏窗口降低内存占用（默认开启）：窗口隐藏时把 WebView2 内存目标级别设为
     /// Low（弃缓存换页、脚本照常运行），显示前恢复 Normal。见 webview_mem.rs
     #[serde(default = "default_true")]
@@ -380,6 +389,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_agent_permission_mode() -> String {
+    "ask".to_string()
+}
+
 fn default_wallpaper_veil() -> f64 {
     0.3
 }
@@ -474,6 +487,9 @@ impl Default for AppConfig {
             clock_quote: String::new(),
             notice_duration_ms: default_notice_duration_ms(),
             online_enabled: true,
+            agent_permission_mode: default_agent_permission_mode(),
+            agent_about_me: String::new(),
+            agent_prompt_on_dangerous: false,
             webview_mem_low_on_hide: true,
             weather_city: String::new(),
             weather_lat: 0.0,
