@@ -17,6 +17,12 @@ use tokio::sync::oneshot;
 use super::approval::{ApproveAnswer, SessionGrants};
 use super::turn::ApprovalAsk;
 
+/// 进行中回合的登记：中断旗标 + 归属会话（会话删除时按会话批量中断）
+struct TurnReg {
+    session_id: i64,
+    flag: Arc<AtomicBool>,
+}
+
 pub struct AgentState {
     /// 「每次都问」档的会话级授权（跨 turn 存续，会话删除时清理）。
     /// **同步锁**：只在快照/合并的一瞬间持有，绝不跨 await——Ask 档等用户确认
@@ -30,8 +36,8 @@ pub struct AgentState {
     /// 键带 turn_id：不少兼容后端每请求都产 `call_0` 这类跨请求复用的 id，
     /// 并发回合撞车时裸 call_id 会互相顶掉（0.9.0 审查修复）。
     approvals: Mutex<HashMap<(String, String), (ApprovalAsk, oneshot::Sender<ApproveAnswer>)>>,
-    /// 进行中 turn 的中断旗标（turn_id → flag）
-    cancels: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    /// 进行中 turn 的登记（turn_id → 旗标 + 归属会话）
+    cancels: Mutex<HashMap<String, TurnReg>>,
 }
 
 impl Default for AgentState {
@@ -59,13 +65,13 @@ impl AgentState {
         self.grants.lock().expect("grants 锁").merge(snapshot);
     }
 
-    /// turn 开始：登记中断旗标
-    pub fn register_turn(&self, turn_id: &str) -> Arc<AtomicBool> {
+    /// turn 开始：登记中断旗标与归属会话
+    pub fn register_turn(&self, session_id: i64, turn_id: &str) -> Arc<AtomicBool> {
         let flag = Arc::new(AtomicBool::new(false));
         self.cancels
             .lock()
             .expect("cancels 锁")
-            .insert(turn_id.to_string(), flag.clone());
+            .insert(turn_id.to_string(), TurnReg { session_id, flag: flag.clone() });
         flag
     }
 
@@ -85,8 +91,21 @@ impl AgentState {
 
     /// 用户请求中断：置旗标（流式回调与循环检查点都会看到）
     pub fn cancel_turn(&self, turn_id: &str) {
-        if let Some(f) = self.cancels.lock().expect("cancels 锁").get(turn_id) {
-            f.store(true, Ordering::Relaxed);
+        if let Some(reg) = self.cancels.lock().expect("cancels 锁").get(turn_id) {
+            reg.flag.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// 会话删除时中断其全部进行中回合：不取消的话回合会继续烧模型调用，
+    /// 收尾写入也会因会话已删（外键级联清了消息）而报错
+    pub fn cancel_session_turns(&self, session_id: i64) {
+        let regs = self.cancels.lock().expect("cancels 锁");
+        let hits: Vec<&TurnReg> = regs.values().filter(|r| r.session_id == session_id).collect();
+        if !hits.is_empty() {
+            log::info!("[agent] 会话 {session_id} 删除，中断其 {} 个进行中回合", hits.len());
+        }
+        for reg in hits {
+            reg.flag.store(true, Ordering::Relaxed);
         }
     }
 
@@ -214,7 +233,7 @@ mod tests {
     #[tokio::test]
     async fn cancel_flag_and_finish_cleanup() {
         let st = AgentState::new();
-        let flag = st.register_turn("t1");
+        let flag = st.register_turn(1, "t1");
         assert!(!flag.load(Ordering::Relaxed));
         st.cancel_turn("t1");
         assert!(flag.load(Ordering::Relaxed));
@@ -222,8 +241,23 @@ mod tests {
         st.cancel_turn("nope");
         st.finish_turn("t1");
         // finish 后旗标登记已清（重新 register 拿的是新旗标）
-        let flag2 = st.register_turn("t1");
+        let flag2 = st.register_turn(1, "t1");
         assert!(!flag2.load(Ordering::Relaxed));
+    }
+
+    /// 0.9.0 审查优化回归：会话删除时中断其全部进行中回合——只影响归属该会话的旗标
+    #[tokio::test]
+    async fn cancel_session_turns_only_flags_own_session() {
+        let st = AgentState::new();
+        let f1 = st.register_turn(1, "t1");
+        let f2 = st.register_turn(1, "t2");
+        let f3 = st.register_turn(2, "t3");
+        st.cancel_session_turns(1);
+        assert!(f1.load(Ordering::Relaxed), "会话 1 的回合应被中断");
+        assert!(f2.load(Ordering::Relaxed));
+        assert!(!f3.load(Ordering::Relaxed), "其它会话的回合不受影响");
+        // 登记还在（由各回合自己的 finish_turn 清理）
+        st.cancel_turn("t1");
     }
 
     #[tokio::test]

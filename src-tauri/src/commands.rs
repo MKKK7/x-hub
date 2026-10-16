@@ -3718,6 +3718,9 @@ pub fn delete_chat_session(
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     chat::delete_session(&conn, id).map_err(err_str)?;
     drop(conn);
+    // 会话删了，其进行中的 agent 回合也要中断：不取消会继续烧模型调用，
+    // 收尾写入还会因外键级联（消息已随会话清掉）而报错（0.9.0 审查优化）
+    agent.cancel_session_turns(id);
     agent.clear_session(id);
     log::info!("删除对话会话: id={}", id);
     Ok(())
@@ -4321,7 +4324,7 @@ pub async fn send_agent_message(
     on_event
         .send(crate::chat::ChatStreamEvent::TurnStart { turn_id: turn_id.clone() })
         .map_err(|e| e.to_string())?;
-    let cancel_flag = agent.register_turn(&turn_id);
+    let cancel_flag = agent.register_turn(session_id, &turn_id);
     let mut invoke = AgentStreamInvoke {
         model: model.clone(),
         turn_id: turn_id.clone(),
@@ -4330,7 +4333,20 @@ pub async fn send_agent_message(
     };
     let mut approver = OneshotApprover { state: agent.inner().clone(), flag: cancel_flag.clone() };
     let ev = on_event.clone();
-    let emit = move |e: crate::chat::ChatStreamEvent| ev.send(e).map_err(|x| x.to_string());
+    // 错误/中断收尾的 partial：顺手记录已流出的增量（封顶防无界）——正文本体在
+    // invoke 内部的 buffer 里，这里不记的话 Error 事件的 partial 永远是空串
+    let partial_buf = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let pb = partial_buf.clone();
+    let emit = move |e: crate::chat::ChatStreamEvent| {
+        if let crate::chat::ChatStreamEvent::Chunk { content } = &e {
+            if let Ok(mut b) = pb.lock() {
+                if b.len() < 20_000 {
+                    b.push_str(content);
+                }
+            }
+        }
+        ev.send(e).map_err(|x| x.to_string())
+    };
     let f2 = cancel_flag.clone();
     let is_cancelled = move || f2.load(std::sync::atomic::Ordering::Relaxed);
 
@@ -4429,13 +4445,16 @@ pub async fn send_agent_message(
                 None => on_event
                     .send(crate::chat::ChatStreamEvent::Error {
                         message: "已中断".into(),
-                        partial: String::new(),
+                        partial: partial_buf.lock().map(|b| b.clone()).unwrap_or_default(),
                     })
                     .map_err(|e| e.to_string())?,
             }
         }
         Err(e) => on_event
-            .send(crate::chat::ChatStreamEvent::Error { message: e, partial: String::new() })
+            .send(crate::chat::ChatStreamEvent::Error {
+                message: e,
+                partial: partial_buf.lock().map(|b| b.clone()).unwrap_or_default(),
+            })
             .map_err(|e2| e2.to_string())?,
     }
 

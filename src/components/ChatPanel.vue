@@ -58,7 +58,8 @@ interface ToolCard {
   callId: string
   name: string
   args: string
-  level: 'read' | 'write' | 'dangerous'
+  /** 危险等级；'' = 历史还原卡无从得知（落库消息不带 level），显示中性灰点 */
+  level: 'read' | 'write' | 'dangerous' | ''
   status: 'running' | 'awaiting' | 'ok' | 'error' | 'denied'
   turnId: string
   summary: string
@@ -139,7 +140,7 @@ const INSUFFICIENT_TOKEN = 'insufficient_credits'
 const isInsufficientCredits = computed(() => streamError.value.includes(INSUFFICIENT_TOKEN))
 
 function levelClass(l: string): string {
-  return l === 'dangerous' ? 'lv-danger' : l === 'write' ? 'lv-write' : 'lv-read'
+  return l === 'dangerous' ? 'lv-danger' : l === 'write' ? 'lv-write' : l === 'read' ? 'lv-read' : ''
 }
 function statusText(s: ToolCard['status']): string {
   return s === 'running' ? '执行中' : s === 'awaiting' ? '等待确认' : s === 'ok' ? '完成' : s === 'denied' ? '已拒绝' : '失败'
@@ -183,7 +184,9 @@ function restoreToolCards(msgs: ChatMessage[]) {
       callId: m.tool_call_id ?? `restored_${m.id}`,
       name: m.tool_name ?? 'tool',
       args: '',
-      level: 'read',
+      // 落库消息不带等级，未知时显示中性灰点——不该把历史里执行过的写/危险操作
+      // 一律伪装成绿色只读级（0.9.0 审查优化）
+      level: '',
       status,
       turnId: m.turn_id ?? '',
       summary: status === 'ok' ? '已执行（历史回合）' : cancelled ? '已中断（历史回合）' : status === 'denied' ? '已拒绝（历史回合）' : '执行失败（历史回合）',

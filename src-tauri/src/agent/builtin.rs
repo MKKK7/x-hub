@@ -407,7 +407,7 @@ impl AgentTool for GetStickies {
 struct ListSnippets;
 impl AgentTool for ListSnippets {
     fn name(&self) -> &'static str { "list_snippets" }
-    fn description(&self) -> &'static str { "列提示词百宝箱（含置顶态与正文）。" }
+    fn description(&self) -> &'static str { "列提示词百宝箱（返回置顶态与标题，不含正文——需要改动用 update_snippet）。" }
     fn level(&self) -> Level { Level::Read }
     fn parameters(&self) -> Value { json!({"type":"object","properties":{}}) }
     fn execute(&self, _args: &Value, ctx: ToolCtx) -> ToolOutcome {
@@ -745,13 +745,21 @@ impl AgentTool for UpdateNote {
         let note = match repo::note::get(ctx.conn, id) { Ok(n) => n, Err(_) => return ToolOutcome::err(format!("笔记 {id} 不存在"), String::new()) };
         let title = arg_str(args, "title").unwrap_or(&note.title);
         let content = arg_str(args, "content").unwrap_or(&note.content);
+        // 先做全部校验再落库（与 create_note 同款）：folder 匹配失败时标题/正文
+        // 不能已经改了一半——模型拿到「失败」会整单重试，半途状态会让用户看到
+        // 报错但数据已变（0.9.0 审查优化）
+        let folder_id = match arg_str(args, "folder") {
+            Some(want) => {
+                let folders = match repo::note_folder::list(ctx.conn) { Ok(f) => f, Err(e) => return db_err(e) };
+                let cands: Vec<(String, i64)> = folders.iter().map(|f| (f.name.clone(), f.id)).collect();
+                match match_exact(&cands, want) { Ok(fid) => Some(fid), Err(c) => return not_found_outcome("文件夹", want, c) }
+            }
+            None => None,
+        };
         if arg_str(args, "title").is_some() || arg_str(args, "content").is_some() {
             let _ = match repo::note::update(ctx.conn, id, title, content) { Ok(n) => n, Err(e) => return db_err(e) };
         }
-        if let Some(want) = arg_str(args, "folder") {
-            let folders = match repo::note_folder::list(ctx.conn) { Ok(f) => f, Err(e) => return db_err(e) };
-            let cands: Vec<(String, i64)> = folders.iter().map(|f| (f.name.clone(), f.id)).collect();
-            let fid = match match_exact(&cands, want) { Ok(id) => id, Err(c) => return not_found_outcome("文件夹", want, c) };
+        if let Some(fid) = folder_id {
             if let Err(e) = repo::note::set_folder(ctx.conn, id, Some(fid)) { return db_err(e); }
         }
         ToolOutcome::ok(format!("已更新《{}》", title), format!("已更新笔记 [{}]《{}》", id, title))
@@ -807,6 +815,24 @@ impl AgentTool for CreateResource {
             Some("file") => ResourceKind::File,
             _ => return ToolOutcome::err("kind 必须是 app/web/file 之一", String::new()),
         };
+        // target 静默校验（0.9.0 审查优化）：「允许创建」不能变成「允许预置一个稍后
+        // 一键启动的任意协议/程序」——web 只收 http(s)，app/file 拒绝 URL 形态
+        match kind {
+            ResourceKind::Web => {
+                let t = target.to_ascii_lowercase();
+                if !t.starts_with("http://") && !t.starts_with("https://") {
+                    return ToolOutcome::err("web 资源的 target 必须是 http:// 或 https:// 开头的网址", String::new());
+                }
+            }
+            ResourceKind::App | ResourceKind::File => {
+                if target.contains("://") {
+                    return ToolOutcome::err(format!("{} 资源的 target 必须是本地路径，不能是网址", crate::repo::resource::kind_to_str(&kind)), String::new());
+                }
+                if target.len() > 500 {
+                    return ToolOutcome::err("target 路径过长", String::new());
+                }
+            }
+        }
         let kind_str = crate::repo::resource::kind_to_str(&kind);
         let category = match arg_str(args, "category") {
             Some(want) => {
@@ -1186,6 +1212,43 @@ mod tests {
             ToolCtx { conn: &conn },
         );
         assert!(!out.ok);
+    }
+
+    /// 0.9.0 审查优化回归：create_resource 的 target 静默校验——
+    /// web 只收 http(s)（防预置 file:// 等任意协议稍后一键启动），app/file 拒绝 URL 形态
+    #[test]
+    fn create_resource_validates_target_shape() {
+        let conn = crate::db::init_in_memory().unwrap();
+        let bad = CreateResource.execute(
+            &json!({"name":"x","target":"file:///C:/Windows/notepad.exe","kind":"web"}),
+            ToolCtx { conn: &conn },
+        );
+        assert!(!bad.ok, "web 资源非 http(s) 协议应被拒绝");
+        let bad = CreateResource.execute(
+            &json!({"name":"x","target":"https://example.com/app","kind":"app"}),
+            ToolCtx { conn: &conn },
+        );
+        assert!(!bad.ok, "app 资源的 target 不能是网址");
+        let ok = CreateResource.execute(
+            &json!({"name":"x","target":"https://example.com","kind":"web"}),
+            ToolCtx { conn: &conn },
+        );
+        assert!(ok.ok, "{}", ok.summary);
+    }
+
+    /// 0.9.0 审查优化回归：update_note 先验后写——folder 匹配失败时
+    /// 标题/正文不能已经改了一半
+    #[test]
+    fn update_note_validates_folder_before_writing() {
+        let conn = crate::db::init_in_memory().unwrap();
+        let n = repo::note::create(&conn, "原标题").unwrap();
+        let out = UpdateNote.execute(
+            &json!({"note_id": n.id, "title":"改一半的标题","folder":"不存在的文件夹"}),
+            ToolCtx { conn: &conn },
+        );
+        assert!(!out.ok, "文件夹匹配失败应报错");
+        let after = repo::note::get(&conn, n.id).unwrap();
+        assert_eq!(after.title, "原标题", "报错时标题不能已被改动");
     }
 
     /// 0.9.0 审查回归：get_setting 只放行白名单键——chat_models 等敏感配置不外发

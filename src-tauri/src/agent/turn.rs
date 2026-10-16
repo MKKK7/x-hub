@@ -211,9 +211,10 @@ where
                 art.interrupted = true;
                 // 中断时未执行的调用必须补一条取消结果再落库：assistant.tool_calls 与
                 // role:"tool" 消息是上游强校验的成对关系，缺一边下轮请求会被 400 拒绝
-                //（已执行的写操作不回滚，这里只补协议占位，不产生 ToolCall 事件）
+                //（已执行的写操作不回滚，这里只补协议占位，不产生 ToolCall 事件；
+                //  发送失败也忽略——马上要 break，落库成对性比事件送达更重要）
                 for rest in &output.tool_calls[ci..] {
-                    push_tool_result(
+                    let _ = push_tool_result(
                         turn_id,
                         rest,
                         &ToolOutcome::err("回合已中断，该调用未执行", String::new()),
@@ -241,17 +242,18 @@ where
                     execute_call(
                         session_id, turn_id, &call, level, registry, &mut emit,
                         &mut art, &mut convo, &open_tool_conn,
-                    );
+                    )?;
                 }
                 Decision::NeedApproval => {
-                    // 事件由循环统一发（Approver 只负责等待答复）；前端渲染内联确认卡片
-                    let _ = emit(ChatStreamEvent::ApprovalRequest {
+                    // 事件由循环统一发（Approver 只负责等待答复）；前端渲染内联确认卡片。
+                    // 发送失败（前端窗口已销毁）直接终止回合——没必要再等一个永远无人应答的审批
+                    emit(ChatStreamEvent::ApprovalRequest {
                         turn_id: turn_id.to_string(),
                         call_id: call.id.clone(),
                         name: call.name.clone(),
                         args: call.arguments.clone(),
                         level: level.as_str().to_string(),
-                    });
+                    })?;
                     let answer = approve.approve(ApprovalAsk {
                         session_id,
                         turn_id: turn_id.to_string(),
@@ -272,13 +274,13 @@ where
                                 &mut emit,
                                 &mut art,
                                 &mut convo,
-                            );
+                            )?;
                         }
                         ApproveAnswer::Once => {
                             execute_call(
                                 session_id, turn_id, &call, level, registry,
                                 &mut emit, &mut art, &mut convo, &open_tool_conn,
-                            );
+                            )?;
                         }
                         ApproveAnswer::Always => {
                             // 「本会话内允许这类操作」：只存内存，重启即失效（§5）
@@ -286,7 +288,7 @@ where
                             execute_call(
                                 session_id, turn_id, &call, level, registry,
                                 &mut emit, &mut art, &mut convo, &open_tool_conn,
-                            );
+                            )?;
                         }
                     }
                 }
@@ -304,7 +306,7 @@ where
                         &mut emit,
                         &mut art,
                         &mut convo,
-                    );
+                    )?;
                 }
             }
         }
@@ -331,7 +333,9 @@ where
     Ok(art)
 }
 
-/// 已获准（或会话已授权）的调用：发 ToolCall → 执行 → 发 ToolResult → 追加 tool 消息
+/// 已获准（或会话已授权）的调用：发 ToolCall → 执行 → 发 ToolResult → 追加 tool 消息。
+/// 事件发送失败（前端窗口已销毁）向上传播终止回合——纯工具轮的 Chunk 增量可能一条
+/// 都没有，不传播的话循环会对着死通道空转完 MAX_ROUNDS 轮模型调用
 #[allow(clippy::too_many_arguments)]
 fn execute_call(
     // 预留给 #t45 的工具上下文（如会话级作用域）；当前执行路径未用
@@ -344,14 +348,14 @@ fn execute_call(
     art: &mut TurnArtifacts,
     convo: &mut Vec<ChatMessage>,
     open_conn: &dyn Fn() -> std::result::Result<rusqlite::Connection, String>,
-) {
-    let _ = emit(ChatStreamEvent::ToolCall {
+) -> Result<(), String> {
+    emit(ChatStreamEvent::ToolCall {
         turn_id: turn_id.to_string(),
         call_id: call.id.clone(),
         name: call.name.clone(),
         args: call.arguments.clone(),
         level: level.as_str().to_string(),
-    });
+    })?;
     let outcome = run_tool(registry, call, open_conn);
     if outcome.ok {
         art.tool_count += 1;
@@ -360,7 +364,7 @@ fn execute_call(
             art.domains.insert(domain.to_string());
         }
     }
-    push_tool_result(turn_id, call, &outcome, if outcome.ok { "ok" } else { "error" }, emit, art, convo);
+    push_tool_result(turn_id, call, &outcome, if outcome.ok { "ok" } else { "error" }, emit, art, convo)
 }
 
 /// 解析参数并执行；任何一层失败都变成 err 形态的工具结果（模型自行纠错，§4）
@@ -400,6 +404,7 @@ fn run_tool(
 }
 
 /// 把工具结果发事件 + 追加进 convo / pending（tool 消息与调用成对，§4② 铁律）
+#[allow(clippy::too_many_arguments)]
 fn push_tool_result(
     turn_id: &str,
     call: &ToolCallRequest,
@@ -408,7 +413,7 @@ fn push_tool_result(
     emit: &mut dyn FnMut(ChatStreamEvent) -> Result<(), String>,
     art: &mut TurnArtifacts,
     convo: &mut Vec<ChatMessage>,
-) {
+) -> Result<(), String> {
     // §5 结果长度控制：事件给 UI 全文（可展开），回填模型做截断
     let full = if outcome.detail.trim().is_empty() {
         outcome.summary.clone()
@@ -416,12 +421,6 @@ fn push_tool_result(
         outcome.detail.clone()
     };
     let for_model = crate::agent::tools::cap_for_model(&full);
-    let _ = emit(ChatStreamEvent::ToolResult {
-        call_id: call.id.clone(),
-        ok: outcome.ok,
-        summary: outcome.summary.clone(),
-        detail: full.clone(),
-    });
     let msg = PendingMessage {
         role: "tool".into(),
         content: for_model,
@@ -430,6 +429,8 @@ fn push_tool_result(
         tool_name: Some(call.name.clone()),
         tool_status: Some(status.to_string()),
     };
+    // 先落 pending/convo 再发事件：assistant.tool_calls ↔ tool 结果的成对关系是落库
+    // 铁律，事件送达失败不能让已执行的结果从历史里消失
     art.pending.push(msg.clone());
     convo.push(wire_msg(
         "tool",
@@ -440,6 +441,12 @@ fn push_tool_result(
         msg.tool_name,
         msg.tool_status,
     ));
+    emit(ChatStreamEvent::ToolResult {
+        call_id: call.id.clone(),
+        ok: outcome.ok,
+        summary: outcome.summary.clone(),
+        detail: full,
+    })
 }
 
 /// 循环内构建内存 ChatMessage（payload 只消费 role/content/tool 字段，
@@ -860,6 +867,39 @@ mod tests {
             assert_eq!(r.tool_call_id.as_deref(), Some(c["id"].as_str().unwrap()));
             assert_eq!(r.tool_status.as_deref(), Some("cancelled"));
         }
+    }
+
+    /// 0.9.0 审查优化回归：前端通道已死（emit 失败）应立即终止回合，
+    /// 不再对死通道空转烧完 MAX_ROUNDS 轮模型调用
+    #[tokio::test]
+    async fn dead_channel_aborts_turn_instead_of_spinning() {
+        let execs = Arc::new(AtomicUsize::new(0));
+        let registry = reg_with(Level::Read, execs.clone());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let c2 = calls.clone();
+        struct CountingInvoke(Arc<AtomicUsize>);
+        impl ModelInvoke for CountingInvoke {
+            fn invoke<'a>(
+                &mut self,
+                _msgs: Vec<ChatMessage>,
+                _tools: Option<Vec<Value>>,
+                _cb: ChunkCb<'a>,
+            ) -> InvokeFuture<'a> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { Ok(round_with("", vec![call("c", "count_tool", "{}")])) })
+            }
+        }
+        let mut inv: Box<dyn ModelInvoke> = Box::new(CountingInvoke(c2));
+        // 通道恒失败：模拟前端窗口已销毁
+        let mut emit = |_e: ChatStreamEvent| -> Result<(), String> { Err("channel closed".into()) };
+        let mut grants = SessionGrants::default();
+        let res = run_agent_turn(
+            SID, TURN, PermissionMode::Ask, &mut grants, false, &registry, "sys", vec![],
+            MAX_ROUNDS, inv.as_mut(), &mut Nop, &mut emit, || false, mem_conn,
+        )
+        .await;
+        assert!(res.is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "首个工具事件发送失败即终止，不得继续调用模型");
     }
 
     #[tokio::test]
