@@ -133,8 +133,8 @@ async function onClose() {
   await tauriApi.chatWindowClose().catch(() => {})
 }
 
-// 「模型设置」→ 唤出主窗并定位到设置 → AI 助手；section="account" = 账号页（积分入口用）
-async function onOpenModelSettings(section: 'ai' | 'account' = 'ai') {
+// 「模型设置」→ 唤出主窗并定位到设置 → AI 助手 → 供应商；section="account" = 账号页（积分入口用）
+async function onOpenModelSettings(section: 'providers' | 'account' = 'providers') {
   if (!isTauri()) return
   await tauriApi.chatWindowOpenSettings(section).catch(() => {})
 }

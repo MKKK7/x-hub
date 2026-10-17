@@ -2,7 +2,7 @@
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { marked, Renderer } from 'marked'
 import DOMPurify from 'dompurify'
-import { ChevronDown, CircleOff, MessageSquare, PanelRightClose, Plus, Send, Settings2, Square, X, Zap } from 'lucide-vue-next'
+import { Check, ChevronDown, CircleOff, Copy, MessageSquare, PanelRightClose, Plus, Send, Settings2, Square, X, Zap } from 'lucide-vue-next'
 import { PLATFORM_ENTRY_NAME, isPlatformModel, isTauri, tauriApi, type AccountStatus, type AgentApprovalAsk, type ChatMessage, type ChatModelConfig, type ChatSession, type ChatStreamEvent } from '../api/tauri'
 import AppSelect from './AppSelect.vue'
 
@@ -133,7 +133,7 @@ const permLabel = computed(() => permOptions.find((o) => o.value === permMode.va
 /** 账号完整状态（含积分账本）；loadModels 时随登录态一并刷新 */
 const account = ref<AccountStatus | null>(null)
 const creditRemaining = computed(() =>
-  account.value?.loggedIn && !account.value.error && platformEnabled.value ? account.value.creditsRemaining : null,
+  account.value?.loggedIn && !account.value.error && platformEnabled.value ? account.value.creditRemaining : null,
 )
 /** 平台 429 insufficient_credits 的稳定 token（chat.rs 生成，前端据此渲染分流卡片而非裸报错） */
 const INSUFFICIENT_TOKEN = 'insufficient_credits'
@@ -742,6 +742,42 @@ function mdHtml(m: ChatMessage): string {
   return html
 }
 
+// ---- 消息复制钮：默认隐藏、悬停对应消息才浮现；点击复制原文，短暂变主题色对勾 ----
+const copiedMsgId = ref<number | null>(null)
+let copiedTimer: ReturnType<typeof setTimeout> | null = null
+async function copyMessage(m: ChatMessage) {
+  const text = m.content
+  if (!text) return
+  let ok = false
+  try {
+    await navigator.clipboard.writeText(text)
+    ok = true
+  } catch {
+    // 剪贴板 API 不可用时回退 execCommand（与 AiProviders 同款做法）
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    try {
+      ok = document.execCommand('copy')
+    } catch {
+      ok = false
+    }
+    document.body.removeChild(ta)
+  }
+  if (!ok) {
+    showToast('复制失败')
+    return
+  }
+  copiedMsgId.value = m.id
+  if (copiedTimer) clearTimeout(copiedTimer)
+  copiedTimer = setTimeout(() => {
+    copiedMsgId.value = null
+  }, 1200)
+}
+
 // 历史中间过程块的展开状态（按消息 id，默认折叠）
 const stepOpen = ref<Record<number, boolean>>({})
 function toggleStep(id: number) {
@@ -822,7 +858,7 @@ let startSize = 420
 
 const isVertical = computed(() => props.side === 'top' || props.side === 'bottom')
 
-const panelWidth = ref(420)
+const panelWidth = ref(450)
 const panelHeight = ref(380)
 
 function clampSize(v: number, min: number, max: number): number {
@@ -988,7 +1024,7 @@ defineExpose({
           <template v-for="m in messages" :key="m.id">
             <!-- 中间过程（0.9.0）：带 tool_calls 的 assistant 叙述保留为折叠块，点按展开 -->
             <div v-if="m.role === 'assistant' && m.tool_calls && m.content" class="msg ai">
-              <div class="ava">A</div>
+              <div class="ava">X</div>
               <div class="step-block" :class="{ open: !!stepOpen[m.id] }" @click="toggleStep(m.id)">
                 <div class="step-head">
                   <ChevronDown :size="12" class="step-chev" />
@@ -999,15 +1035,28 @@ defineExpose({
             </div>
             <!-- tool 结果行已由卡片时间线呈现，不重复渲染 -->
             <div v-else-if="m.role !== 'tool' && !m.tool_calls" class="msg" :class="m.role === 'user' ? 'user' : 'ai'">
-              <div class="ava">{{ m.role === 'user' ? '你' : 'A' }}</div>
-              <div v-if="m.role === 'assistant'" class="bubble md" v-html="mdHtml(m)"></div>
-              <div v-else class="bubble">{{ m.content }}</div>
+              <div class="ava">{{ m.role === 'user' ? '你' : 'X' }}</div>
+              <div class="bubble-col">
+                <div v-if="m.role === 'assistant'" class="bubble md" v-html="mdHtml(m)"></div>
+                <div v-else class="bubble">{{ m.content }}</div>
+                <button
+                  class="msg-copy"
+                  :class="{ copied: copiedMsgId === m.id }"
+                  type="button"
+                  :title="copiedMsgId === m.id ? '已复制' : '复制内容'"
+                  :aria-label="copiedMsgId === m.id ? '已复制' : '复制这条消息内容'"
+                  @click="copyMessage(m)"
+                >
+                  <Check v-if="copiedMsgId === m.id" :size="12" :stroke-width="2.6" />
+                  <Copy v-else :size="12" :stroke-width="2" />
+                </button>
+              </div>
             </div>
           </template>
 
           <!-- 本回合时间线：中间过程块（折叠）与工具卡片按发生顺序混排 + 内联审批 -->
           <div v-if="turnFlow.length" class="msg ai">
-            <div class="ava">A</div>
+            <div class="ava">X</div>
             <div class="tool-timeline">
               <template v-for="item in turnFlow" :key="item.key">
                 <div v-if="item.kind === 'text'" class="step-block" :class="{ open: item.open }" @click="item.open = !item.open">
@@ -1037,7 +1086,7 @@ defineExpose({
           </div>
 
           <div v-if="sending" class="msg ai">
-            <div class="ava">A</div>
+            <div class="ava">X</div>
             <div v-if="streamingContent" class="bubble streaming md">
               <span v-html="streamHtml"></span><span class="cursor"></span>
             </div>
@@ -1047,7 +1096,7 @@ defineExpose({
           </div>
 
           <div v-if="streamError" class="msg ai">
-            <div class="ava">A</div>
+            <div class="ava">X</div>
             <!-- 积分不足（429 insufficient_credits）分流卡片：给去处，不只给报错（#t47） -->
             <div v-if="isInsufficientCredits" class="bubble error insufficient">
               <span class="err-title"><CircleOff :size="13" /> 积分不足</span>
@@ -1096,7 +1145,6 @@ defineExpose({
         @input="autosize"
       ></textarea>
       <div class="cp-input-bar">
-        <span v-if="sending" class="cp-hint">生成中…（可点停止中断）</span>
         <div class="model-sel">
           <span class="dotg" :class="{ off: !selectedReady }" :title="readyHint"></span>
           <AppSelect
@@ -1628,6 +1676,47 @@ defineExpose({
   word-break: break-word;
   overflow-wrap: anywhere;
 }
+/* 气泡列：气泡 + 下方复制钮纵向排布（用户消息整体右对齐） */
+.bubble-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  max-width: 100%;
+}
+.msg.user .bubble-col {
+  align-items: flex-end;
+}
+.bubble-col .bubble {
+  max-width: 100%;
+}
+/* 复制钮：默认隐藏，悬停对应消息行才浮现；点击后短暂变主题色对勾 */
+.msg-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-4);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms, color 120ms;
+}
+.msg:hover .msg-copy,
+.msg-copy:focus-visible {
+  opacity: 1;
+}
+.msg-copy:hover {
+  color: var(--text-2);
+  background: var(--bg-card-soft);
+}
+.msg-copy.copied {
+  color: var(--brand-500);
+  opacity: 1;
+}
 .msg.user .bubble {
   background: var(--brand-500);
   color: var(--text-on-accent);
@@ -1956,9 +2045,23 @@ defineExpose({
   align-items: center;
   gap: 8px;
 }
-.cp-hint {
-  font-size: 0.71875rem;
-  color: var(--text-3);
+/* 生成中的进行中动效落在停止键上：方块图标脉冲呼吸（进行中一眼可见），
+   不再需要「生成中…」文字提示；系统「减少动态效果」时被 style.css 全局降级 */
+.send.stop svg {
+  animation: stop-pulse 1.1s ease-in-out infinite;
+}
+@keyframes stop-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+}
+.send.stop {
+  background: var(--c-red);
 }
 .send {
   margin-left: auto;
@@ -1981,9 +2084,6 @@ defineExpose({
 .send:disabled {
   opacity: 0.5;
   cursor: default;
-}
-.send.stop {
-  background: var(--c-red);
 }
 
 /* ---- Agent 工具时间线（#t46）---- */

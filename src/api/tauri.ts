@@ -641,9 +641,11 @@ export interface AccountStatus {
   role: string
   quotaTotal: number
   quotaRemaining: number
-  /** 积分账本（权威口径）：平台模型按 token 折算扣积分，1 次 ≈ 10 积分 */
-  creditsTotal: number
-  creditsRemaining: number
+  /** 积分账本（权威口径）：平台模型按 token 折算扣积分，1 次 ≈ 10 积分。
+   *  ⚠️ 字段名与后端 serde 序列化严格一致（account.rs 是 credit 单数）——
+   *  写成 credits 复数会静默读到 undefined（徽标曾显示「剩余 undefined 积分」） */
+  creditTotal: number
+  creditRemaining: number
   /** 已兑换邀请码（= 有权益：额度 + 可申请开发者） */
   inviteRedeemed: boolean
   /** none / pending / approved / rejected */
@@ -1520,8 +1522,8 @@ export const tauriApi = {
     invoke<void>('chat_window_set_pinned', { pinned }),
   chatWindowSaveMode: (enabled: boolean) =>
     invoke<void>('chat_window_save_mode', { enabled }),
-  chatWindowOpenSettings: (section?: 'ai' | 'account') =>
-    invoke<void>('chat_window_open_settings', { section: section ?? 'ai' }),
+  chatWindowOpenSettings: (section?: 'providers' | 'account') =>
+    invoke<void>('chat_window_open_settings', { section: section ?? 'providers' }),
   getAppInfo: () => invoke<AppInfo>('get_app_info'),
   createCountdown: (payload: {
     name: string

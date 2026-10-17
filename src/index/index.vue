@@ -675,9 +675,9 @@ function onChatToggle() {
   toggleChat()
 }
 
-// 面板「去配置大模型」：跳转设置页并定位到 AI 助手分类
+// 面板「去配置大模型 / 模型设置」：跳转设置页并定位到 AI 助手 → 供应商子项
 function onOpenChatSettings() {
-  settingsSection.value = 'ai'
+  settingsSection.value = 'providers'
   if (chatOpen.value) toggleChat()
   activeView.value = 'settings'
 }

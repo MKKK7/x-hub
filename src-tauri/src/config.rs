@@ -496,7 +496,7 @@ impl Default for AppConfig {
             weather_lng: 0.0,
             quote_source: "online".to_string(),
             chat_models: default_chat_models(),
-            chat_panel_width: 420.0,
+            chat_panel_width: 450.0,
             chat_panel_open: false,
             chat_panel_side: "right".to_string(),
             chat_panel_height: 380.0,

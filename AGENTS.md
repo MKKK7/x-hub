@@ -4,7 +4,7 @@
 
 ## 概述
 
-基于 Tauri 2 + Vue 3 + Tailwind CSS 4 的本地桌面效率工作台（Bento 风格 Dashboard）。侧栏导航含 **工作台**（自由网格布局：时钟/天气/便签×2/系统监视/提示词/待办/日历/倒计时/概览卡 + 最近使用通栏，时钟与天气支持多形态展示，可经布局编辑器所见即所得编排）、**待办**（标签筛选 / 月·周日历 / 周期待办 / 置顶）、**速记**（笔记）、**速达**（应用/网页/文件资源），另有**扩展中心/扩展视图**与侧栏左下角独立入口**设置**（两级导航：左栏 7 大类 常规/外观/工作台/功能/扩展/账号/数据与关于，当前大类的子项在其下缩进展开——如「扩展」下含 扩展 / Skills；顶部另有**设置项搜索**；右侧**只挂载当前大类**的分区）。主要子系统：**AI 对话面板**（OpenAI 兼容流式，Ctrl+Shift+K）、**剪贴板历史**（Ctrl+`）、**扩展系统**（module/view/window/drawer 四形态 + service 托管 + 市场）、**应用自动更新**、**倒计时浮窗**、**天气/一言**。Rust 后端管理 SQLite 数据持久化，前端使用 Vite 8 + TypeScript 6。
+基于 Tauri 2 + Vue 3 + Tailwind CSS 4 的本地桌面效率工作台（Bento 风格 Dashboard）。侧栏导航含 **工作台**（自由网格布局：时钟/天气/便签×2/系统监视/提示词/待办/日历/倒计时/概览卡 + 最近使用通栏，时钟与天气支持多形态展示，可经布局编辑器所见即所得编排）、**待办**（标签筛选 / 月·周日历 / 周期待办 / 置顶）、**速记**（笔记）、**速达**（应用/网页/文件资源），另有**扩展中心/扩展视图**与侧栏左下角独立入口**设置**（两级导航：左栏 8 大类 常规/外观/工作台/AI 助手/功能/扩展/账号/数据与关于（AI 助手 2026-10-16 自「功能」拉出为独立大类，含 AI 助手 / AI 额度 两个子项），当前大类的子项在其下缩进展开——如「扩展」下含 扩展 / Skills；顶部另有**设置项搜索**；右侧**只挂载当前大类**的分区）。主要子系统：**AI 对话面板**（OpenAI 兼容流式，Ctrl+Shift+K）、**剪贴板历史**（Ctrl+`）、**扩展系统**（module/view/window/drawer 四形态 + service 托管 + 市场）、**应用自动更新**、**倒计时浮窗**、**天气/一言**。Rust 后端管理 SQLite 数据持久化，前端使用 Vite 8 + TypeScript 6。
 
 ## 结构
 
@@ -67,11 +67,11 @@ x-hub/
 │       ├── DashboardLayoutEditor.vue # 工作台布局编辑器视图（所见即所得：clock/weather 真实卡片 + 其余模块真实结构等比缩印、形态切换、最小尺寸钳制 + 适配徽标，保存 dashboard_layout）
 │       ├── DashModulePreview.vue # 布局编辑器模块预览：逐张复刻真实卡片 DOM 与设计令牌，尺寸按 --dp-k 等比缩印，数据取 store 真值（同一组件供画布与形态浮层缩略图共用）
 │       ├── AboutSection.vue    # 设置「关于」区（版本/开源声明/版本历史/检查更新）
-│       ├── SettingsView.vue    # 设置页**外壳**：两级导航（左栏 7 大类 + 当前大类的子项缩进展开）+ 设置项搜索 + 面板路由（按需加载，见约定 50）
+│       ├── SettingsView.vue    # 设置页**外壳**：两级导航（左栏 8 大类 + 当前大类的子项缩进展开）+ 设置项搜索 + 面板路由（按需加载，见约定 50）
 │       ├── SettingsSkeleton.vue # 设置页外壳加载骨架（异步分包期间的同形占位；配置在 index.vue 的 defineAsyncComponent）
 │       ├── settingsIndex.generated.ts # 设置项搜索索引（**自动生成，勿手改**：scripts/gen-settings-index.mjs 扫外壳 + settings/*.vue 提取，见约定 49）
-│       ├── settings/           # 设置页 7 个大类面板（各含自己的脚本 + 模板，按需 import）
-│       │   ├── GeneralPanel.vue / AppearancePanel.vue / WorkbenchPanel.vue / FeaturesPanel.vue / ExtensionsPanel.vue（含「扩展」「Skills」两个分区，Skills 分区抽成同目录 SkillsSection.vue；本地扩展目录的增删在扩展中心「我的扩展」标签页，见约定 55）/ AccountPanel.vue / DataPanel.vue
+│       ├── settings/           # 设置页 8 个大类面板（各含自己的脚本 + 模板，按需 import）
+│       │   ├── GeneralPanel.vue / AppearancePanel.vue / WorkbenchPanel.vue / AiPanel.vue（AI 助手大类：对话形态/供应商模型/AI 额度，2026-10-16 自 FeaturesPanel 拉出，额度自 AccountPanel 并入）/ FeaturesPanel.vue / ExtensionsPanel.vue（含「扩展」「Skills」两个分区，Skills 分区抽成同目录 SkillsSection.vue；本地扩展目录的增删在扩展中心「我的扩展」标签页，见约定 55）/ AccountPanel.vue / DataPanel.vue
 │       │   ├── PanelLoading.vue # 面板加载占位（切大类时避免右侧空白）
 │       │   └── shared.css      # 设置页样式（外移自 scoped，规则统一带 .settings-view 前缀，见约定 50）
 │       └── ContextMenu.vue     # 通用右键菜单
