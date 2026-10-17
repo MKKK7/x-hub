@@ -1,10 +1,10 @@
 # x-hub (个人效率工作台)
 
-**生成:** 2026-08-29 | **分支:** master | **版本:** 0.8.3
+**生成:** 2026-08-29 | **分支:** master | **版本:** 0.9.0
 
 ## 概述
 
-基于 Tauri 2 + Vue 3 + Tailwind CSS 4 的本地桌面效率工作台（Bento 风格 Dashboard）。侧栏导航含 **工作台**（自由网格布局：时钟/天气/便签×2/系统监视/提示词/待办/日历/倒计时/概览卡 + 最近使用通栏，时钟与天气支持多形态展示，可经布局编辑器所见即所得编排）、**待办**（标签筛选 / 月·周日历 / 周期待办 / 置顶）、**速记**（笔记）、**速达**（应用/网页/文件资源），另有**扩展中心/扩展视图**与侧栏左下角独立入口**设置**（两级导航：左栏 8 大类 常规/外观/工作台/AI 助手/功能/扩展/账号/数据与关于（AI 助手 2026-10-16 自「功能」拉出为独立大类，含 AI 助手 / AI 额度 两个子项），当前大类的子项在其下缩进展开——如「扩展」下含 扩展 / Skills；顶部另有**设置项搜索**；右侧**只挂载当前大类**的分区）。主要子系统：**AI 对话面板**（OpenAI 兼容流式，Ctrl+Shift+K）、**剪贴板历史**（Ctrl+`）、**扩展系统**（module/view/window/drawer 四形态 + service 托管 + 市场）、**应用自动更新**、**倒计时浮窗**、**天气/一言**。Rust 后端管理 SQLite 数据持久化，前端使用 Vite 8 + TypeScript 6。
+基于 Tauri 2 + Vue 3 + Tailwind CSS 4 的本地桌面效率工作台（Bento 风格 Dashboard）。侧栏导航含 **工作台**（自由网格布局：时钟/天气/便签×2/系统监视/提示词/待办/日历/倒计时/概览卡 + 最近使用通栏，时钟与天气支持多形态展示，可经布局编辑器所见即所得编排）、**待办**（标签筛选 / 月·周日历 / 周期待办 / 置顶）、**速记**（笔记）、**速达**（应用/网页/文件资源），另有**扩展中心/扩展视图**与侧栏左下角独立入口**设置**（两级导航：左栏 8 大类 常规/外观/工作台/AI 助手/功能/扩展/账号/数据与关于（AI 助手 2026-10-16 自「功能」拉出为独立大类，含 AI 助手 / AI 额度 两个子项），当前大类的子项在其下缩进展开——如「扩展」下含 扩展 / Skills；顶部另有**设置项搜索**；右侧**只挂载当前大类**的分区）。主要子系统：**AI 对话与 Agent 底座**（宿主内自研 agent loop，0.9.0：34 个内置工具 + 扩展自描述工具、权限三档 + 会话级授权、turn 循环，见 `docs/agent-foundation-plan.md` §13；OpenAI 兼容流式，Ctrl+Shift+K）、**剪贴板历史**（Ctrl+`）、**扩展系统**（module/view/window/drawer 四形态 + service 托管 + 市场）、**应用自动更新**、**倒计时浮窗**、**天气/一言**。Rust 后端管理 SQLite 数据持久化，前端使用 Vite 8 + TypeScript 6。
 
 ## 结构
 
@@ -93,6 +93,7 @@ x-hub/
 │   │   ├── sysmon.rs           # 系统资源监视（CPU/内存，sysinfo crate）
 │   │   ├── chat.rs             # OpenAI 兼容 SSE 流式对话客户端 + API Key 系统钥匙串（keyring）存取
 │   │   ├── chat_window.rs      # AI 对话独立窗口（label chat：无条件启动预创建隐藏常驻 + show/hide 快操作 + 几何防抖落盘 + 置顶持久化，运行期绝不建窗，见约定 33/41）
+│   │   ├── agent/              # Agent 底座（0.9.0，ADR 0006）：mod.rs 模块索引 / tools.rs+builtin.rs 工具注册表（34 内置：读 15/写 14/危险 5）/ turn.rs 循环编排（10 轮上限）/ context.rs 按 turn 截断+工具消息成对剪枝 / prompt.rs system prompt / approval.rs+state.rs 审批与会话级授权（只存内存）/ ext_tools.rs 扩展自描述工具聚合（manifest.agent.tools），实施记录见 `docs/agent-foundation-plan.md` §13
 │   │   ├── clipboard.rs        # 剪贴板监听与历史（文本/图片落盘/文件）+ 粘贴注入（clipboard_paste_method）
 │   │   ├── online.rs           # 联网服务：连通性探活/天气（Open-Meteo）/城市地理编码/IP 定位/名言（hitokoto）
 │   │   ├── extension.rs        # 扩展扫描/安装/卸载/权限 + extensions_stamp 热更新检测
@@ -123,8 +124,8 @@ x-hub/
 │   ├── r2-distribution-and-updater.md        # 扩展市场 R2 分发与应用自动更新方案（P0–P3 已实施）
 │   ├── self-hosted-distribution.md           # 分发端点迁移方案（腾讯云 COS 替代 R2，脚本/CI 已切换；Nginx 备选）
 │   ├── file-search-plan.md                   # 本地文件搜索方案（已定稿待实现）
-│   ├── agent-foundation-plan.md              # Agent 底座实施方案（已定稿待实现；选型决策见 adr/0006）
-│   └── adr/                    # 架构决策记录（0001 首次使用引导 / 0006 Agent 底座选型：均待实施）
+│   ├── agent-foundation-plan.md              # Agent 底座实施方案（已实施 0.9.0，实施记录见其 §13；选型决策见 adr/0006）
+│   └── adr/                    # 架构决策记录（0001 首次使用引导：待实施 / 0006 Agent 底座选型：已实施 0.9.0 / 0016 平台额度积分制：已实施）
 ├── DESIGN.md                   # 当前设计系统（唯一实现基线，与 style.css 对齐；§8 为 Reka UI 组件规范）
 ├── PRODUCT.md                  # 产品定义（用户/目标/品牌个性/设计原则/无障碍基线）
 ├── CONTEXT.md                  # 领域术语表（易混淆概念精确区分；「引导」节为规划中未实施）
