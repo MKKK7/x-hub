@@ -18,6 +18,7 @@ import ClockCard from '../components/ClockCard.vue'
 import WeatherCard from '../components/WeatherCard.vue'
 import StickyCard from '../components/StickyCard.vue'
 import CountdownCard from '../components/CountdownCard.vue'
+import ClaudeHaloCard from '../components/ClaudeHaloCard.vue'
 import { useStore } from '../stores/workbench'
 import { isTauri, tauriApi } from '../api/tauri'
 import { convertFileSrc } from '@tauri-apps/api/core'
@@ -321,6 +322,7 @@ const dashCardComponents: Record<string, Component> = {
   todo: TodoCard,
   calendar: TodoCalendarCard,
   recent: RecentBar,
+  claudehalo: ClaudeHaloCard,
 }
 
 function dashCardComponent(id: string): Component {
@@ -381,6 +383,7 @@ function dashCardProps(p: DashPlacement): Record<string, unknown> {
     case 'sysmon':
     case 'diary':
     case 'recent':
+    case 'claudehalo':
       return { ...titleProps(p) }
     default:
       return {}
