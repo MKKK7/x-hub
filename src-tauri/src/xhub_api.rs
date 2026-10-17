@@ -71,6 +71,12 @@ pub(crate) static CAPABILITIES: &[Capability] = &[
         handler: CapabilityHandler::Sync(runtime_call_extension),
     },
     Capability {
+        namespace: "runtime",
+        method: "openPermissions",
+        permission: None,
+        handler: CapabilityHandler::Sync(runtime_open_permissions),
+    },
+    Capability {
         namespace: "storage",
         method: "get",
         permission: None,
@@ -386,6 +392,12 @@ pub(crate) static CAPABILITIES: &[Capability] = &[
         handler: CapabilityHandler::Sync(config_remove),
     },
     Capability {
+        namespace: "ui",
+        method: "notify",
+        permission: Some("notify"),
+        handler: CapabilityHandler::Sync(ui_notify),
+    },
+    Capability {
         namespace: "events",
         method: "emit",
         permission: Some("events"),
@@ -628,9 +640,21 @@ async fn dispatch(
 
 // ---------- runtime ----------
 
-fn runtime_open_external(_app: &tauri::AppHandle, _state: &DbState, _ext_id: &str, args: Value) -> Result<Value, String> {
+fn runtime_open_external(app: &tauri::AppHandle, _state: &DbState, ext_id: &str, args: Value) -> Result<Value, String> {
     let url = args.get("url").and_then(Value::as_str).ok_or("INVALID_ARGUMENT: 缺少 URL")?;
-    crate::process::open_external(url.to_string())?;
+    // 链接打开方式（扩展详情弹窗「链接打开方式」可配）：browser = 系统默认浏览器；
+    // 其余/未配置 = inapp，走应用内置浏览器窗口（suda 浏览器池，ADR 0011）
+    let config = crate::config::load();
+    let mode = config
+        .extension_link_modes
+        .get(ext_id)
+        .map(String::as_str)
+        .unwrap_or("inapp");
+    if mode == "browser" {
+        crate::process::open_external(url.to_string())?;
+    } else {
+        crate::suda_browser::suda_browser_open_url(app.clone(), url.to_string())?;
+    }
     Ok(Value::Null)
 }
 
@@ -658,6 +682,21 @@ fn runtime_call_extension(
         ));
     }
     Ok(Value::Null)
+}
+
+/// runtime.openPermissions：请求宿主打开本扩展的设置/授权弹窗（无需权限——
+/// 只能打开自己的设置，不暴露任何数据）。实现为广播 `open-extension-settings`
+/// 事件，主窗 index.vue 收到后切到扩展中心并打开该扩展的设置弹窗。
+/// 典型用途：service 后端未授权（PERMISSION_DENIED）时扩展页给「去授权」跳转。
+fn runtime_open_permissions(
+    _app: &tauri::AppHandle,
+    _state: &DbState,
+    ext_id: &str,
+    _args: Value,
+) -> Result<Value, String> {
+    // 需要发事件而非纯回值：设置弹窗挂在主窗前端的扩展中心里
+    let _ = _app.emit("open-extension-settings", ext_id.to_string());
+    Ok(json!({ "opened": true }))
 }
 
 /// runtime.info：扩展身份 + service 就绪态 + 代理前缀 + 宿主能力清单。
@@ -900,6 +939,13 @@ fn data_todos_list(
     })
 }
 
+/// 扩展桥资源载荷统一剥离 remark：备注里存的是用户密码（secret.rs 加密落盘），
+/// 持有 data:read/write 权限的扩展不该读到明文；说明与备注标签非敏感，保留
+fn strip_resource_remark(mut r: crate::models::Resource) -> crate::models::Resource {
+    r.remark = None;
+    r
+}
+
 fn data_resources_list(
     _app: &tauri::AppHandle,
     state: &DbState,
@@ -907,7 +953,11 @@ fn data_resources_list(
     _args: Value,
 ) -> Result<Value, String> {
     data_read(state, |conn| {
-        let resources = repo::resource::list_all(conn).map_err(|e| e.to_string())?;
+        let resources = repo::resource::list_all(conn)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(strip_resource_remark)
+            .collect::<Vec<_>>();
         serde_json::to_value(resources).map_err(|e| e.to_string())
     })
 }
@@ -942,7 +992,7 @@ fn data_resources_get(
         .ok_or_else(|| "INVALID_ARGUMENT: 缺少 id".to_string())?;
     data_read(state, |conn| {
         let resource = repo::resource::get(conn, id).map_err(|e| e.to_string())?;
-        serde_json::to_value(resource).map_err(|e| e.to_string())
+        serde_json::to_value(strip_resource_remark(resource)).map_err(|e| e.to_string())
     })
 }
 
@@ -1542,9 +1592,15 @@ fn data_resources_create(
         .map(str::to_owned)
         .ok_or_else(|| "INVALID_ARGUMENT: 缺少 target".to_string())?;
     let category = args.get("category").and_then(|v| v.as_str()).map(str::to_owned);
+    let zone_id = args.get("zoneId").and_then(|v| v.as_i64());
     let icon = args.get("icon").and_then(|v| v.as_str()).map(str::to_owned);
     let extra = args.get("args").and_then(|v| v.as_str()).map(str::to_owned);
     data_write(app, state, None, |conn| {
+        if let Some(zid) = zone_id {
+            if !repo::zone::exists(conn, zid).map_err(|e| e.to_string())? {
+                return Err(format!("NOT_FOUND: 分区 {zid} 不存在"));
+            }
+        }
         let resource = repo::resource::create(
             conn,
             kind,
@@ -1553,9 +1609,14 @@ fn data_resources_create(
             category.as_deref(),
             icon.as_deref(),
             extra.as_deref(),
+            zone_id,
+            // 扩展不得写入备注（密码）与说明：一律空
+            None,
+            None,
+            None,
         )
         .map_err(|e| e.to_string())?;
-        serde_json::to_value(resource).map_err(|e| e.to_string())
+        serde_json::to_value(strip_resource_remark(resource)).map_err(|e| e.to_string())
     })
 }
 
@@ -1580,10 +1641,22 @@ fn data_resources_update(
         .map(str::to_owned)
         .ok_or_else(|| "INVALID_ARGUMENT: 缺少 target".to_string())?;
     let category = args.get("category").and_then(|v| v.as_str()).map(str::to_owned);
+    // 与 category 同款「全对象写」语义：调用方不传 zoneId 即写为未分区
+    let zone_id = args.get("zoneId").and_then(|v| v.as_i64());
     let icon = args.get("icon").and_then(|v| v.as_str()).map(str::to_owned);
     let extra = args.get("args").and_then(|v| v.as_str()).map(str::to_owned);
     data_write(app, state, None, |conn| {
-        let resource = repo::resource::update(
+        if let Some(zid) = zone_id {
+            if !repo::zone::exists(conn, zid).map_err(|e| e.to_string())? {
+                return Err(format!("NOT_FOUND: 分区 {zid} 不存在"));
+            }
+        }
+        // 「全对象写」语义下扩展不知道备注/说明字段：先读现值原样带回，防止扩展
+        // 更新其它字段时把用户的备注（密码）与说明整体抹掉；扩展无路径改写它们。
+        // 备注透传**落盘原值**（密文/旧明文），不做解密→重加密往返
+        let existing = repo::resource::get(conn, id).map_err(|e| e.to_string())?;
+        let remark_stored = repo::resource::remark_raw(conn, id).map_err(|e| e.to_string())?;
+        let resource = repo::resource::update_with_stored_remark(
             conn,
             id,
             kind,
@@ -1592,9 +1665,13 @@ fn data_resources_update(
             category.as_deref(),
             icon.as_deref(),
             extra.as_deref(),
+            zone_id,
+            existing.description.as_deref(),
+            remark_stored,
+            existing.remark_label.as_deref(),
         )
         .map_err(|e| e.to_string())?;
-        serde_json::to_value(resource).map_err(|e| e.to_string())
+        serde_json::to_value(strip_resource_remark(resource)).map_err(|e| e.to_string())
     })
 }
 
@@ -2100,6 +2177,28 @@ fn fs_save_as(
     })
 }
 
+// ---------- ui（扩展界面与通知；notify 权限校验在 dispatch） ----------
+
+/// ui.notify：扩展推送一条右下角通知（复用宿主的自绘通知窗，需 `notify` 权限）。
+/// 长度上限与前端卡片展示口径一致：标题截 80 字符、正文截 300 字符（正文卡片最多 3 行），
+/// 既不信任扩展输入，也避免超长文本把常驻通知窗撑爆。
+fn ui_notify(
+    app: &tauri::AppHandle,
+    _state: &DbState,
+    _ext_id: &str,
+    args: Value,
+) -> Result<Value, String> {
+    let title = args.get("title").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let body = args.get("body").and_then(|v| v.as_str()).unwrap_or("").trim();
+    if title.is_empty() && body.is_empty() {
+        return Err("INVALID_ARGUMENT: 通知标题与正文不能都为空".into());
+    }
+    let title: String = title.chars().take(80).collect();
+    let body: String = body.chars().take(300).collect();
+    crate::notify::show_notice(app, "extension", &title, &body);
+    Ok(Value::Null)
+}
+
 // ---------- events（扩展间事件总线；emit 权限校验在 dispatch，广播在前端） ----------
 
 /// events.emit：只做权限校验占位（dispatch 已统一校验 events 权限）。
@@ -2182,6 +2281,7 @@ mod tests {
             open_in: vec![],
             entry: Default::default(),
             permissions: vec!["data:read".into()],
+            category: None,
             requires: vec![],
             depends_on: vec![],
             disabled: None,
@@ -2191,9 +2291,11 @@ mod tests {
             min_size: None,
             backend: None,
             description: String::new(),
+            author: None,
             config: Map::new(),
             module_variants: vec![],
             module_options: Default::default(),
+            agent: None,
         };
         assert!(declares(&manifest, "data:read"));
         assert!(!declares(&manifest, "data:write"));
@@ -2233,6 +2335,23 @@ mod tests {
             .find(|c| c.namespace == "runtime" && c.method == "info")
             .expect("runtime.info 必须在能力表中");
         assert_eq!(info.permission, None);
+        // openPermissions：打开自己的设置/授权弹窗，同样无需权限（只能开自己的，不暴露数据）
+        let perms = CAPABILITIES
+            .iter()
+            .find(|c| c.namespace == "runtime" && c.method == "openPermissions")
+            .expect("runtime.openPermissions 必须在能力表中");
+        assert_eq!(perms.permission, None);
+    }
+
+    #[test]
+    fn ui_notify_requires_notify_permission() {
+        // 通知对扩展开放：复用宿主右下角通知窗，须声明窄权限 `notify`
+        // （与 precheck.rs / gate.ts 的 `ui → notify` 同口径）。
+        let cap = CAPABILITIES
+            .iter()
+            .find(|c| c.namespace == "ui" && c.method == "notify")
+            .expect("ui.notify 必须在能力表中");
+        assert_eq!(cap.permission, Some("notify"));
     }
 
     #[test]
@@ -2282,6 +2401,8 @@ mod tests {
         assert!(keys.contains(&("data", "tags.create")));
         assert!(keys.contains(&("data", "tags.setNoteTags")));
         assert!(keys.contains(&("service", "request")));
+        // 界面与通知：ui.notify 走右下角通知窗，漏登记 = 扩展调不通
+        assert!(keys.contains(&("ui", "notify")));
     }
 
     /// data 读方法（挂 data:read 权限）方法名约定：list / get / ofNote 结尾。

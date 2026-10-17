@@ -23,6 +23,7 @@ import {
   Globe,
   ListTodo,
   MemoryStick,
+  NotebookPen,
   PanelTopClose,
   Pin,
   Plus,
@@ -100,7 +101,8 @@ const {
   countdownList,
   snippetList,
   todoGroups,
-  todoDayMarks,
+  calendarTodosByDay,
+  todoOverdueMarks,
   pendingCount,
   doneCount,
   recentList,
@@ -177,11 +179,11 @@ function sudaImg(r: Resource): string {
 const stickySlot = computed(() => (props.modId === 'sticky2' ? 2 : 1))
 // 缩印里的模块名：一律取模块注册表标题（扩展 = manifest.name），不要用 ext: 后面的 id
 const extName = computed(() => dashModuleTitle(props.modId))
-/** 日历模块缩印：当月 6×7 网格 + 有截止的待办分布。
- *  网格与标记都走与真卡同源的派生数据（previewDate 由分钟 tick 推进、
- *  todoDayMarks 是全量口径），缩印里不另算一套。 */
+/** 日历横排缩印：日期、真实事项排序和逾期标记均来自共享派生数据。 */
 const calCells = computed(() => calendarGrid(previewDate.value, previewDate.value))
-const calMarked = todoDayMarks
+const calTitles = calendarTodosByDay
+/** 含未完成逾期的日期：格子淡红底，与真卡 `.tc-cell.has-overdue` 同口径同色 */
+const calOverdue = todoOverdueMarks
 const kind = computed(() => {
   const id = props.modId
   if (id.startsWith('ext:')) return 'ext'
@@ -298,6 +300,16 @@ const kind = computed(() => {
       <div class="sticky-input">
         <span v-if="stickyText[stickySlot]" class="sticky-text">{{ stickyText[stickySlot] }}</span>
         <span v-else class="sticky-ph">随手记…</span>
+      </div>
+    </template>
+
+    <!-- ===== 日记（真实卡 = DiaryCard：标题 + 自动长高输入框，预览恒为空态占位） ===== -->
+    <template v-else-if="kind === 'diary'">
+      <header class="hd" :class="{ 'hd-float': hideTitle }">
+        <h3 v-if="!hideTitle" class="hd-title"><NotebookPen class="ic" /><span>{{ title ?? '日记' }}</span></h3>
+      </header>
+      <div class="diary-input">
+        <span class="diary-ph">记一笔今天的日记，回车保存</span>
       </div>
     </template>
 
@@ -487,6 +499,7 @@ const kind = computed(() => {
           <div v-for="t in g.items" :key="t.id" class="todo-row">
             <span class="todo-check"></span>
             <span class="todo-pri" :style="{ background: priBg(t.priority) }"></span>
+            <Pin v-if="t.pinned" class="pb-pin" />
             <span class="todo-label">{{ t.title }}</span>
             <span v-if="t.badge" class="todo-badge" :class="t.badge.kind">
               <component :is="BADGE_ICON[t.badge.kind]" class="ic-xs" />{{ t.badge.text }}
@@ -507,18 +520,18 @@ const kind = computed(() => {
       </h3>
       <div class="cal-mini">
         <div v-for="d in ['一', '二', '三', '四', '五', '六', '日']" :key="d" class="cal-dow">{{ d }}</div>
-        <div v-for="c in calCells" :key="c.key" class="cal-cell" :class="{ out: c.out, today: c.today }">
+        <div v-for="c in calCells" :key="c.key" class="cal-cell" :class="{ out: c.out, today: c.today, 'has-overdue': calOverdue.has(c.key) }">
           <span class="cal-day">{{ c.day }}</span>
-          <i v-if="calMarked.get(c.key)" class="cal-dot" :title="`${calMarked.get(c.key)} 条待办`"></i>
+          <span v-if="calTitles.get(c.key)?.length" class="cal-label" :class="{ done: calTitles.get(c.key)?.[0]?.done, late: !calTitles.get(c.key)?.[0]?.done && calOverdue.has(c.key) }">{{ calTitles.get(c.key)?.[0]?.title }}</span>
+          <span v-if="(calTitles.get(c.key)?.length ?? 0) > 1" class="cal-count">+{{ (calTitles.get(c.key)?.length ?? 0) - 1 }}</span>
         </div>
       </div>
     </template>
 
     <!-- ===== 最近使用 ===== -->
     <template v-else-if="kind === 'recent'">
-      <header class="hd hd-split" :class="{ 'hd-float': hideTitle }">
-        <h3 v-if="!hideTitle" class="hd-title"><Flame class="ic" /><span>{{ title ?? '最近使用' }}</span></h3>
-        <span class="hd-btn"><ArrowRight class="ic" /></span>
+      <header v-if="!hideTitle" class="hd">
+        <h3 class="hd-title"><Flame class="ic" /><span>{{ title ?? '最近使用' }}</span></h3>
       </header>
       <div v-if="recentList.length" class="rb-body">
         <div v-for="r in recentList" :key="r.id" class="rb-card">
@@ -545,7 +558,7 @@ const kind = computed(() => {
       </header>
       <div v-if="sudaCustom.configured && sudaCustom.items.length" class="scc-grid">
         <div v-for="r in sudaCustom.items" :key="r.id" class="scc-item">
-          <span class="scc-icon" :style="{ background: sudaAccent(r).soft }">
+          <span class="scc-icon" :style="sudaImg(r) ? {} : { background: sudaAccent(r).soft }">
             <img v-if="sudaImg(r)" :src="sudaImg(r)" class="scc-img" alt="" @error="failedIcons.add(r.id)" />
             <Globe v-else-if="r.kind === 'web'" class="scc-lg" style="color: var(--c-green-ink)" />
             <component
@@ -608,21 +621,24 @@ const kind = computed(() => {
   min-height: 0;
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  grid-auto-rows: minmax(0, 1fr);
+  grid-template-rows: calc(14 * var(--u)) repeat(6, minmax(0, 1fr));
   gap: calc(2 * var(--u));
 }
 .cal-dow {
   font-size: calc(9 * var(--u));
+  line-height: calc(14 * var(--u));
   font-weight: 700;
   color: var(--text-4);
   text-align: center;
 }
 .cal-cell {
+  min-width: 0;
+  min-height: 0;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
   justify-content: flex-start;
-  gap: calc(1 * var(--u));
+  gap: calc(3 * var(--u));
   /* 尺寸照抄真卡 .tc-cell（padding 2px 3px / 圆角 5px），只把 px 换成 var(--u) */
   padding: calc(2 * var(--u)) calc(3 * var(--u));
   border: 1px solid var(--border-soft);
@@ -636,17 +652,34 @@ const kind = computed(() => {
 .cal-cell.today {
   border-color: var(--brand-500);
 }
+/* 与真卡 .tc-cell.has-overdue 同一条规则：色值/比例改任一处必须两边同步 */
+.cal-cell.has-overdue {
+  background: color-mix(in srgb, var(--c-red-soft) 50%, var(--bg-card-soft));
+}
 .cal-day {
+  flex-shrink: 0;
   font-size: calc(9 * var(--u));
+  line-height: calc(12 * var(--u));
   color: var(--text-4);
   font-variant-numeric: tabular-nums;
 }
-.cal-dot {
-  width: calc(4 * var(--u));
-  height: calc(4 * var(--u));
-  border-radius: 50%;
-  background: var(--brand-500);
+.cal-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 calc(3 * var(--u));
+  font-size: calc(11 * var(--u));
+  line-height: calc(14 * var(--u));
+  border: 1px solid var(--brand-500);
+  border-radius: calc(3 * var(--u));
+  background: var(--brand-50);
+  color: var(--text-1);
 }
+.cal-label.late { border-color: var(--c-red-ink); background: var(--c-red-soft); color: var(--c-red-ink); }
+.cal-label.done { border-color: var(--border-soft); background: transparent; color: var(--text-4); text-decoration: line-through; }
+.cal-count { flex-shrink: 0; font-size: calc(8 * var(--u)); color: var(--text-4); }
 html[data-theme='dark'] .dpv {
   --todo-pri-default: #52525f;
 }
@@ -1101,6 +1134,25 @@ html[data-theme='dark'] .dpv {
   word-break: break-word;
 }
 .sticky-ph {
+  color: var(--text-4);
+}
+
+/* ---- 日记（真实卡 = DiaryCard：标题 + 自动长高输入框） ---- */
+.diary-input {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border-soft);
+  background: var(--input-bg);
+  border-radius: var(--radius-md);
+  padding: calc(8 * var(--u));
+  font-size: calc(12 * var(--u));
+  line-height: 1.6;
+  color: var(--text-2);
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.diary-ph {
   color: var(--text-4);
 }
 
@@ -1565,20 +1617,18 @@ html[data-theme='dark'] .dpv {
   color: var(--brand-500);
 }
 
-/* ---- 最近使用 ---- */
+/* ---- 最近使用（与真卡同款 grid：minmax 下限计列、1fr 均摊富余宽，整行铺满） ---- */
 .rb-body {
   flex: 1;
   min-height: 0;
-  display: flex;
-  flex-wrap: wrap;
-  align-content: flex-start;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(calc(72 * var(--u)), 1fr));
+  grid-auto-rows: calc(80 * var(--u));
   gap: calc(10 * var(--u));
   overflow: hidden;
-  align-items: flex-start;
 }
 .rb-card {
-  width: calc(72 * var(--u));
-  flex-shrink: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1601,7 +1651,6 @@ html[data-theme='dark'] .dpv {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  background: var(--bg-card);
 }
 .rb-initial {
   font-size: calc(17 * var(--u));

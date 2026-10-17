@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ChevronLeft, ChevronRight, ExternalLink, ImageOff, Package, Shield, ShieldAlert, X } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, ExternalLink, ImageOff, Package, Shield, ShieldAlert, ShieldCheck, X } from 'lucide-vue-next'
 import { useFocusTrap } from '../composables/useFocusTrap'
 import { isTauri, tauriApi, type MarketExtension } from '../api/tauri'
 import { accentOf } from '../composables/useResourceIcon'
+import { displayCategory, installCountText, isOfficialExt } from '../utils/extensionMeta'
 
 const props = defineProps<{
   extension: MarketExtension | null
@@ -137,7 +138,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         <div ref="cardRef" class="modal-card md-card" role="dialog" aria-label="扩展详情" aria-modal="true">
           <div class="md-head">
             <div class="md-title">
-              <span class="md-icon" :style="{ background: accentOf(m!.name).soft }">
+              <span class="md-icon" :style="m!.icon && !iconFailed ? {} : { background: accentOf(m!.name).soft }">
                 <img
                   v-if="m!.icon && !iconFailed"
                   :src="m!.icon"
@@ -148,7 +149,15 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                 <span v-else :style="{ color: accentOf(m!.name).text }">{{ initial() }}</span>
               </span>
               <div class="md-title-text">
-                <h2 class="dialog-title">{{ m!.name }}</h2>
+                <h2 class="dialog-title">
+                  <!-- 名字包一层可收缩 span：flex 容器上 text-overflow 不生效，省略号必须落在文本项自己身上 -->
+                  <span class="dialog-title-text">{{ m!.name }}</span>
+                  <!-- 官方标识：与市场卡片同一判定口径（清单 official 标记 / com.x-hub.* 保留命名空间） -->
+                  <span v-if="isOfficialExt(m!)" class="md-official" title="官方扩展（平台官方自营）">
+                    <ShieldCheck :size="12" :stroke-width="2.2" aria-hidden="true" />
+                    官方
+                  </span>
+                </h2>
                 <span class="md-version">v{{ m!.version }}</span>
               </div>
             </div>
@@ -228,16 +237,24 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                 <span class="md-meta-value">{{ m!.runtime === 'service' ? '服务' : 'Web' }}</span>
               </div>
               <div class="md-meta-item">
+                <span class="md-meta-label">分类</span>
+                <span class="md-meta-value">{{ displayCategory(m!.category) }}</span>
+              </div>
+              <div class="md-meta-item">
                 <span class="md-meta-label">大小</span>
                 <span class="md-meta-value">{{ formatSize(m!.size) }}</span>
+              </div>
+              <div class="md-meta-item">
+                <span class="md-meta-label">安装次数</span>
+                <span class="md-meta-value">{{ installCountText(m!.installCount) }}</span>
+              </div>
+              <div class="md-meta-item">
+                <span class="md-meta-label">作者</span>
+                <span class="md-meta-value">{{ m!.author || '—' }}</span>
               </div>
               <div v-if="m!.minAppVersion" class="md-meta-item">
                 <span class="md-meta-label">要求宿主</span>
                 <span class="md-meta-value">v{{ m!.minAppVersion }}+</span>
-              </div>
-              <div v-if="m!.author" class="md-meta-item">
-                <span class="md-meta-label">作者</span>
-                <span class="md-meta-value">{{ m!.author }}</span>
               </div>
             </div>
 
@@ -298,30 +315,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             </div>
           </div>
 
-          <!-- 截图放大：覆盖整屏，点任意处关闭；多图时 ←/→ 翻页（和笔记图片预览同一交互口径） -->
-          <div v-if="shotPreview" class="md-lightbox" @click="shotPreview = false">
-            <img :src="currentShot" :alt="`${m!.name} 截图 ${shotIndex + 1}`" />
-            <template v-if="shots.length > 1">
-              <button
-                class="md-lb-nav md-lb-prev"
-                type="button"
-                aria-label="上一张截图"
-                @click.stop="showShot(shotIndex - 1)"
-              >
-                <ChevronLeft :size="20" :stroke-width="2.2" aria-hidden="true" />
-              </button>
-              <button
-                class="md-lb-nav md-lb-next"
-                type="button"
-                aria-label="下一张截图"
-                @click.stop="showShot(shotIndex + 1)"
-              >
-                <ChevronRight :size="20" :stroke-width="2.2" aria-hidden="true" />
-              </button>
-              <span class="md-lb-count">{{ shotIndex + 1 }} / {{ shots.length }}</span>
-            </template>
-          </div>
-
           <div class="md-foot">
             <button class="ghost-btn" type="button" @click="emit('close')">关闭</button>
             <button
@@ -337,6 +330,33 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         </div>
       </div>
     </Transition>
+
+    <!-- 截图放大灯箱：必须挂在 Teleport 根、与遮罩平级，不能放进 .md-card——
+         .modal-card 带 backdrop-filter（玻璃弹窗），会把自己变成 fixed 后代的包含块，
+         灯箱放卡片里 inset:0 只能铺到弹窗大小（实测就是「点开还在弹窗内，看不清」的根因）；
+         挂出来 fixed 才相对视口定位，铺满整个软件窗口。点任意处关闭；多图时 ←/→ 翻页 -->
+    <div v-if="visible && shotPreview" class="md-lightbox" @click="shotPreview = false">
+      <img :src="currentShot" :alt="`${m!.name} 截图 ${shotIndex + 1}`" />
+      <template v-if="shots.length > 1">
+        <button
+          class="md-lb-nav md-lb-prev"
+          type="button"
+          aria-label="上一张截图"
+          @click.stop="showShot(shotIndex - 1)"
+        >
+          <ChevronLeft :size="20" :stroke-width="2.2" aria-hidden="true" />
+        </button>
+        <button
+          class="md-lb-nav md-lb-next"
+          type="button"
+          aria-label="下一张截图"
+          @click.stop="showShot(shotIndex + 1)"
+        >
+          <ChevronRight :size="20" :stroke-width="2.2" aria-hidden="true" />
+        </button>
+        <span class="md-lb-count">{{ shotIndex + 1 }} / {{ shots.length }}</span>
+      </template>
+    </div>
   </Teleport>
 </template>
 
@@ -389,13 +409,35 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   min-width: 0;
 }
 .md-title-text .dialog-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0;
   font-size: 1.0625rem;
   font-weight: 700;
   color: var(--text-1);
-  white-space: nowrap;
+  overflow: hidden;
+}
+.dialog-title-text {
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 官方标识：与市场卡片同款填充药丸，标题旁一眼认出 */
+.md-official {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--brand-500);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.4;
 }
 .md-version {
   font-size: 0.75rem;
@@ -410,7 +452,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   gap: 13px;
   padding: 14px 18px 16px;
 }
-/* 截图展示区：主图（16:10 舞台）+ 缩略图切换 + 放大灯箱 */
+/* 截图展示区：主图（16:10 舞台）+ 缩略图切换；点击进放大灯箱（Teleport 根级，铺满整窗） */
 .md-shots {
   gap: 8px;
 }
@@ -526,6 +568,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   padding: 24px;
   background: var(--scrim);
   cursor: zoom-out;
+  animation: mask-in 0.18s ease-out;
 }
 .md-lightbox img {
   max-width: 100%;

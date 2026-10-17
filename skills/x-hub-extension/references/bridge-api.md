@@ -10,13 +10,14 @@
 
 | 命名空间 | 权限 |
 |---|---|
-| `runtime.*`（`openExternal` 除外）、`storage.*`、`config.*`、`theme.*`、`service.request` | **无需权限** |
-| `xhub.openExternal`（用默认浏览器开外链） | `open-url` |
+| `runtime.*`（`openExternal` 除外）、`storage.*`、`config.*`、`theme.*`、`service.request`、`xhub.openPermissions` | **无需权限** |
+| `xhub.openExternal`（打开外链，默认应用内浏览器） | `open-url` |
 | `data.*` 读方法 | `data:read` |
 | `data.*` 写方法 | `data:write` |
 | `sharedStorage.*` | `shared-storage` |
 | `fs.saveText` / `saveFile` / `saveAs` | `fs` |
 | `events.emit` | `events` |
+| `ui.notify`（推送右下角通知） | `notify` |
 | `events.on`、`xhub.expose` | 无需权限 |
 | `net.fetch`（**@planned 未实现**） | `network` |
 
@@ -31,11 +32,18 @@ await window.xhub.runtime.info()   // { id, name, version, runtime, serviceReady
 window.xhub.runtime.open(surface)  // 打开指定形态（view/window/drawer/module），无需权限
 await window.xhub.runtime.callExtension('com.x-hub.token-stats', 'getData', {})  // 调其它扩展暴露的方法
 
-// 用系统默认浏览器打开外链（需 manifest 声明 "open-url" 权限；只放行 http/https）
+// 打开外链（需 manifest 声明 "open-url" 权限；只放行 http/https）。
+// 默认在**应用内置浏览器窗口**打开；用户可在扩展详情弹窗把单个扩展改为「浏览器」（系统默认浏览器）
 window.xhub.openExternal('https://example.com')
+// 普通写法 <a href="https://…"> 也可以：桥会拦截外链点击统一走 openExternal（遵循同一设置），
+// 但因此**别在 http(s) 外链的 <a> 上绑自己的 click 逻辑**（会被宿主吞掉）；需要自定义行为就用按钮。
 // ⚠️ 扩展里**不要**用 target="_blank" 或 window.open 开外链：宿主用 Tauri/wry 承载 iframe，
 // wry 在宿主未注册新窗口处理器时对 WebView2 的 NewWindowRequested 直接 SetHandled(true) 拒绝，
 // 两种写法在宿主里都是**静默失效**（点了没反应，只有浏览器直开预览时才"看起来正常"）。
+
+// 请求宿主打开本扩展的设置/授权弹窗（无需权限）。典型用途：service 后端未授权时，
+// 页面给「去授权」按钮，点了直接落到该扩展的权限管理，省得用户自己找入口
+window.xhub.openPermissions()
 
 await window.xhub.storage.get(key)        // 无则 null；按扩展隔离持久化
 await window.xhub.storage.set(key, value) // value 需可 JSON 序列化
@@ -57,6 +65,10 @@ window.xhub.events.on('xhub:variant-changed', fn)  // module 形态切换
 window.xhub.events.on('my-event', fn)       // 订阅其它扩展广播的自定义事件
 window.xhub.events.emit('my-event', data)   // 广播给其它扩展（需 permissions: ["events"]）
 window.xhub.expose('getData', fn)           // 暴露方法给其它扩展（配合 manifest.expose）
+
+// 推送一条右下角通知（需 permissions: ["notify"]）；复用宿主自绘通知窗，
+// title 截 80、body 截 300 字符，正文卡片最多 3 行。适合「后台任务完成」这类非阻塞提示。
+await window.xhub.ui.notify('同步完成', '已更新 12 条记录')
 
 await window.xhub.service.request('/api/x', { method, headers, body })  // 仅 service 扩展
 // → XHubHttpResult { status, headers, text(), json() }
@@ -144,7 +156,7 @@ await window.xhub.data.tags.setNoteTags({ noteId, tagIds })   // 全量替换语
 
 ## 未实现（planned，勿依赖）
 
-`clipboard.*`、`net.*`、`system.*`（`openUrl` / `openPath` / `openApp`）、`ui.*`（含 `ui.toast` / `ui.notify`）；
+`clipboard.*`、`net.*`、`system.*`（`openUrl` / `openPath` / `openApp`）、`ui.toast`；
 `fs.readText` / `fs.writeText` / `fs.readDir` / `fs.exists`（受控读写那一套——**与可用的 `fs.saveText` / `saveFile` / `saveAs` 不是一回事**）；
 `data.usage.*`（已从宿主**移除**，AI 用量现在由扩展 `com.x-hub.token-stats` 自行读数据实现）。
 
