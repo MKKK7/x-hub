@@ -114,6 +114,14 @@ pub struct AppConfig {
     /// 完全权限档下危险操作仍逐次提示（子开关，默认关；2026-10-13 拍板：完全权限=风险自担）
     #[serde(default)]
     pub agent_prompt_on_dangerous: bool,
+    /// AI 助手调用扩展工具的总开关（默认开）：关闭后 extension_tool_list/call 一律返回空/拒绝，
+    /// 扩展在 manifest.agent.tools 声明的工具不再进入聚合清单
+    #[serde(default = "default_true")]
+    pub agent_ext_tools_enabled: bool,
+    /// 每扩展授权（缺项 = 允许）：扩展设置弹窗「允许 AI 助手调用」写入；
+    /// 键为扩展 id，false = 该扩展声明的 AI 工具整体退出聚合清单（运行时审批三档照常兜底）
+    #[serde(default)]
+    pub agent_ext_tool_grants: std::collections::HashMap<String, bool>,
     /// 隐藏窗口降低内存占用（默认开启）：窗口隐藏时把 WebView2 内存目标级别设为
     /// Low（弃缓存换页、脚本照常运行），显示前恢复 Normal。见 webview_mem.rs
     #[serde(default = "default_true")]
@@ -490,6 +498,8 @@ impl Default for AppConfig {
             agent_permission_mode: default_agent_permission_mode(),
             agent_about_me: String::new(),
             agent_prompt_on_dangerous: false,
+            agent_ext_tools_enabled: true,
+            agent_ext_tool_grants: std::collections::HashMap::new(),
             webview_mem_low_on_hide: true,
             weather_city: String::new(),
             weather_lat: 0.0,

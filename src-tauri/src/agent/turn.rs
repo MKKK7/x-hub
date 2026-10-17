@@ -264,23 +264,31 @@ where
                 }
                 break;
             }
-            let level = registry
+            // 档位与授权键可按参数覆写（extension_tool_call：档位取目标扩展工具声明档，
+            // 授权键带 ext/tool——「本会话内允许」按目标细粒度生效，不会一通百通）
+            let probe: Value = if call.arguments.trim().is_empty() {
+                Value::Object(serde_json::Map::new())
+            } else {
+                serde_json::from_str(&call.arguments).unwrap_or(Value::Null)
+            };
+            let (level, perm_key) = registry
                 .get(&call.name)
-                .map(|t| t.level())
-                .unwrap_or(Level::Read);
+                .map(|t| t.approval_for(&probe))
+                .unwrap_or((Level::Read, call.name.clone()));
             let decision = decide(
                 mode,
                 level,
-                &call.name,
+                &perm_key,
                 session_id,
                 grants,
                 prompt_on_dangerous_in_full,
             );
             // 全链路留痕：模型没调工具 / 调了被拒 / 等审批 / 已授权直跑，翻日志即知
-            // （「模型谎报已记录」那次靠翻库才定位，log 里有案底就不用再翻）
+            // （「模型谎报已记录」那次靠翻库才定位，log 里有案底就不用再翻）。
+            // 打 perm_key 而非工具名：extension_tool_call 的日志能看出打的是哪个扩展的哪个工具
             log::info!(
                 "[agent:{turn_id}] 工具 {}（{}）→ {:?}",
-                call.name,
+                perm_key,
                 level.as_str(),
                 decision
             );
@@ -330,8 +338,9 @@ where
                             )?;
                         }
                         ApproveAnswer::Always => {
-                            // 「本会话内允许这类操作」：只存内存，重启即失效（§5）
-                            grants.grant(session_id, &call.name);
+                            // 「本会话内允许这类操作」：只存内存，重启即失效（§5）。
+                            // 键经 approval_for 生成（extension_tool_call 带 ext/tool）
+                            grants.grant(session_id, &perm_key);
                             execute_call(
                                 session_id, turn_id, &call, level, registry,
                                 &mut emit, art, &mut convo, &open_tool_conn,

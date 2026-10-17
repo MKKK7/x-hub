@@ -296,6 +296,10 @@ export interface AppConfig {
   agent_about_me: string
   /** 完全权限档下危险操作仍弹确认（子开关，默认关：完全权限 = 风险自担） */
   agent_prompt_on_dangerous: boolean
+  /** AI 助手调用扩展工具的总开关（默认开）：关闭后扩展声明的 AI 工具整体退出聚合清单 */
+  agent_ext_tools_enabled: boolean
+  /** 每扩展授权（缺项 = 允许）：扩展设置弹窗「允许 AI 助手调用」写入 */
+  agent_ext_tool_grants?: Record<string, boolean>
   webview_mem_low_on_hide: boolean // 隐藏窗口降低内存占用（默认开）：隐藏时 WebView2 内存级别设 Low，显示前恢复 Normal
   weather_city: string // 天气城市展示名（空串 = 未配置）
   weather_lat: number // 天气纬度缓存
@@ -498,6 +502,20 @@ export interface ExtensionEntry {
   module_options: ExtensionModuleOptions
   /** 安装时间（目录创建时间，RFC3339；「已安装」列表按此排序，最后安装的在最下面） */
   installed_at: string | null
+  /** 声明给 AI 助手的工具（manifest.agent.tools 校验后的合格子集，空 = 未声明） */
+  agent_tools: ExtensionAgentTool[]
+}
+
+/** 扩展声明给 AI 助手的工具（后端 extension.rs::AgentToolDecl） */
+export interface ExtensionAgentTool {
+  name: string
+  description: string
+  /** AI 侧审批档：read / write / dangerous（与扩展 permissions 两套体系） */
+  level: 'read' | 'write' | 'dangerous'
+  /** 参数 JSON Schema（object；null = 无参） */
+  parameters: Record<string, unknown> | null
+  /** 返回值形状说明（空串 = 未声明） */
+  returns: string
 }
 
 /** 工作台模块选项（后端 extension.rs::ModuleOptions） */

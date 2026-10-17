@@ -683,6 +683,10 @@ pub fn run() {
             // 启动待办提醒后台线程（remind_at 到点发系统通知 + 前端 toast）
             todo_reminder::start(app.handle().clone());
 
+            // 扩展 AI 工具聚合器（manifest.agent.tools）：注入宿主句柄，
+            // extension_tool_list/call 经它扫描扩展与转发 service 后端
+            agent::ext_tools::init(app.handle().clone());
+
             // 启动剪贴板监听线程（启动零加载历史，仅剪贴板变化时落库）
             clipboard::start_monitor(app.handle().clone());
 

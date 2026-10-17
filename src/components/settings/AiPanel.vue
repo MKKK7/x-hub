@@ -168,6 +168,7 @@ type AgentPermMode = (typeof AGENT_PERM_OPTIONS)[number]['value']
 const agentPermMode = ref<AgentPermMode>('ask')
 const agentPromptOnDangerous = ref(false)
 const agentAboutMe = ref('')
+const agentExtTools = ref(true)
 const agentSaving = ref(false)
 
 function normalizePermMode(v: string | undefined): AgentPermMode {
@@ -202,6 +203,7 @@ onMounted(async () => {
   agentPermMode.value = normalizePermMode(store.state.config.agent_permission_mode)
   agentPromptOnDangerous.value = !!store.state.config.agent_prompt_on_dangerous
   agentAboutMe.value = store.state.config.agent_about_me ?? ''
+  agentExtTools.value = store.state.config.agent_ext_tools_enabled !== false
   try {
     // 平台开关的初始状态与积分余额同源（getChatModels / accountStatus），挂载时一并拉取
     platformModels.value = (await tauriApi.getChatModels()).filter(isPlatformModel)
@@ -248,6 +250,23 @@ onMounted(async () => {
         :class="{ on: agentPromptOnDangerous }"
         :disabled="agentSaving"
         @click="agentPromptOnDangerous = !agentPromptOnDangerous; saveAgentSettings({ agent_prompt_on_dangerous: agentPromptOnDangerous })"
+      >
+        <span class="toggle-knob"></span>
+      </button>
+    </div>
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-name">允许调用扩展提供的工具</span>
+        <span class="setting-desc">service 扩展可在 manifest 里声明 AI 工具（数据查询等），AI 按其声明的档位受同一套审批约束；每个扩展还可单独在扩展详情的设置弹窗里关闭</span>
+      </div>
+      <button
+        class="toggle"
+        role="switch"
+        type="button"
+        :aria-checked="agentExtTools"
+        :class="{ on: agentExtTools }"
+        :disabled="agentSaving"
+        @click="agentExtTools = !agentExtTools; saveAgentSettings({ agent_ext_tools_enabled: agentExtTools })"
       >
         <span class="toggle-knob"></span>
       </button>

@@ -16,6 +16,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { section: 'account', title: '我的设备' },
   { section: 'assistant', title: 'AI 助手默认权限档' },
   { section: 'assistant', title: '危险操作仍需确认' },
+  { section: 'assistant', title: '允许调用扩展提供的工具' },
   { section: 'assistant', title: '关于我' },
   { section: 'ai', title: '以独立窗口打开 AI 对话' },
   { section: 'ai', title: 'AI 对话面板透明度' },

@@ -46,6 +46,12 @@ pub trait AgentTool: Send + Sync {
     fn level(&self) -> Level;
     /// 参数 JSON Schema（object），随请求下发给模型
     fn parameters(&self) -> Value;
+    /// 审批档位与会话级授权键（turn 循环在 decide 前调用）。
+    /// 默认 = 静态档位 + 工具名；extension_tool_call 覆写为「目标扩展工具的声明档 +
+    /// 带 ext/tool 的键」，让 Ask 档「本会话内允许」按目标细粒度生效
+    fn approval_for(&self, _args: &Value) -> (Level, String) {
+        (self.level(), self.name().to_string())
+    }
     /// 执行：参数已由循环做 JSON 解析；实现内部自行做字段校验，
     /// 失败返回 `ToolOutcome::err`（作为工具结果回给模型自行纠错，不终止会话）。
     fn execute(&self, args: &Value, ctx: ToolCtx) -> ToolOutcome;

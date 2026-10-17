@@ -1,4 +1,4 @@
-//! 内置工具（§5 全量 30 个 + 0.9.0 新增 create_subcategory 与 get_snippet，共 32：读 13 / 写 14 / 危险 5）。
+//! 内置工具（§5 全量 30 个 + 0.9.0 新增 create_subcategory 与 get_snippet + 0.9.x 扩展桥 2 个，共 34：读 15 / 写 14 / 危险 5）。
 //!
 //! 统一口径：
 //! - **名称匹配失败语义**：`create_note` 的 folder/tags、`create_resource` 的 category
@@ -1103,8 +1103,101 @@ impl AgentTool for LaunchResource {
 // ---------------------------------------------------------------------------
 
 /// 注册全部 31 个内置工具（顺序稳定——tools 数组随每次请求下发，勿乱序）
+// ---------------------------------------------------------------------------
+// 扩展桥（manifest.agent.tools）：扩展自描述的 AI 工具，宿主聚合后转发。
+// 清单与调用都走 ext_tools 聚合器；审批档位在 approval_for 里按目标声明取。
+// ---------------------------------------------------------------------------
+
+struct ExtensionToolList;
+impl AgentTool for ExtensionToolList {
+    fn name(&self) -> &'static str { "extension_tool_list" }
+    fn description(&self) -> &'static str {
+        "列出扩展声明给 AI 的工具（service 扩展在 manifest.agent.tools 里自描述：名称/用途/参数/返回/档位）。用户的任务可能落在某个扩展的数据或功能上时，先调本工具发现，再用 extension_tool_call 调用。"
+    }
+    fn level(&self) -> Level { Level::Read }
+    fn parameters(&self) -> Value { json!({"type":"object","properties":{}}) }
+    fn execute(&self, _args: &Value, _ctx: ToolCtx) -> ToolOutcome {
+        let cfg = crate::config::load();
+        if !cfg.agent_ext_tools_enabled {
+            // 失败语义（§5）：返回说明而非错误，避免模型反复重试
+            return ToolOutcome::ok("扩展工具已关闭", "AI 调用扩展工具的总开关已关闭（设置 → AI 助手）。如用户需要，请指引其开启。");
+        }
+        let list = super::ext_tools::list_available();
+        if list.is_empty() {
+            return ToolOutcome::ok("没有可用的扩展工具", "当前没有扩展声明 AI 工具（仅 service 扩展可声明，且需用户允许 AI 调用）。不要臆造扩展能力。");
+        }
+        // 按扩展分组展示：模型能看出「这个工具是谁家的」，回话时也能交代来源
+        let mut sections: Vec<String> = Vec::new();
+        let mut cur_ext = String::new();
+        let mut cur_lines: Vec<String> = Vec::new();
+        for a in &list {
+            if a.ext_id != cur_ext {
+                if !cur_lines.is_empty() {
+                    sections.push(format!("{cur_ext}：\n{}", cur_lines.join("\n")));
+                }
+                cur_ext = a.ext_id.clone();
+                cur_lines = Vec::new();
+                cur_lines.push(format!("《{}》（{}）提供：", a.ext_name, a.ext_id));
+            }
+            cur_lines.push(super::ext_tools::describe_tool(a));
+        }
+        if !cur_lines.is_empty() {
+            sections.push(format!("{cur_ext}：\n{}", cur_lines.join("\n")));
+        }
+        let ext_count = sections.len();
+        ToolOutcome::ok(
+            format!("{ext_count} 个扩展提供 {} 个工具", list.len()),
+            sections.join("\n\n"),
+        )
+    }
+}
+
+struct ExtensionToolCall;
+impl AgentTool for ExtensionToolCall {
+    fn name(&self) -> &'static str { "extension_tool_call" }
+    fn description(&self) -> &'static str { "调用扩展声明的 AI 工具。ext 与 tool 取自 extension_tool_list 的清单，args 按该工具声明的参数传。写/危险档的工具按权限档需要用户确认，被拒时不要重试。" }
+    // 静态档 Read 仅供 ReadOnly 模式的可见性过滤；实际审批档在 approval_for 按目标声明取
+    fn level(&self) -> Level { Level::Read }
+    fn parameters(&self) -> Value {
+        json!({"type":"object","properties":{
+            "ext":{"type":"string","description":"扩展 id，来自 extension_tool_list"},
+            "tool":{"type":"string","description":"工具名，来自 extension_tool_list"},
+            "args":{"type":"object","description":"按该工具声明的参数传，无参工具可省略"}
+        },"required":["ext","tool"]})
+    }
+    fn approval_for(&self, args: &Value) -> (Level, String) {
+        let (Some(ext), Some(tool)) = (
+            arg_str(args, "ext"),
+            arg_str(args, "tool"),
+        ) else {
+            // 参数不全：按读档处理，执行阶段会报缺参
+            return (Level::Read, self.name().to_string());
+        };
+        match super::ext_tools::find(ext, tool) {
+            Some(a) => (super::ext_tools::level_of(&a.tool.level), super::ext_tools::perm_key(ext, tool)),
+            // 目标不存在（未声明/已禁用/未授权）：读档放行到执行阶段，由聚合器报明确原因
+            None => (Level::Read, self.name().to_string()),
+        }
+    }
+    fn execute(&self, args: &Value, _ctx: ToolCtx) -> ToolOutcome {
+        let Some(ext) = arg_str(args, "ext") else { return ToolOutcome::err("缺少 ext 参数（扩展 id，来自 extension_tool_list）", String::new()) };
+        let Some(tool) = arg_str(args, "tool") else { return ToolOutcome::err("缺少 tool 参数（工具名，来自 extension_tool_list）", String::new()) };
+        let tool_args = args.get("args").cloned().unwrap_or_else(|| json!({}));
+        if !tool_args.is_object() {
+            return ToolOutcome::err("args 必须是对象（按目标工具声明的参数传）", String::new());
+        }
+        match super::ext_tools::call(ext, tool, &tool_args) {
+            Ok(v) => {
+                let detail = serde_json::to_string_pretty(&v).unwrap_or_else(|_| v.to_string());
+                ToolOutcome::ok(format!("{} 已返回", tool), cap_chars(&detail, MAX_TEXT))
+            }
+            Err(e) => ToolOutcome::err(format!("{} 调用失败", tool), e),
+        }
+    }
+}
+
 pub fn register_all(reg: &mut ToolRegistry) {
-    // 读 13
+    // 读 15
     reg.register(Box::new(ListTodos));
     reg.register(Box::new(SearchNotes));
     reg.register(Box::new(GetNote));
@@ -1118,6 +1211,8 @@ pub fn register_all(reg: &mut ToolRegistry) {
     reg.register(Box::new(GlobalSearch));
     reg.register(Box::new(GetWeather));
     reg.register(Box::new(GetSetting));
+    reg.register(Box::new(ExtensionToolList)); // 扩展桥：静态 Read（实际档位按目标声明）
+    reg.register(Box::new(ExtensionToolCall));
     // 写 14
     reg.register(Box::new(CreateTodo));
     reg.register(Box::new(UpdateTodo));
@@ -1152,11 +1247,25 @@ mod tests {
     }
 
     #[test]
-    fn registers_exactly_32_tools() {
+    fn registers_exactly_34_tools() {
         let r = reg();
-        assert_eq!(r.len(), 32, "§5 全量 30 个 + 0.9.0 create_subcategory + get_snippet");
+        assert_eq!(r.len(), 34, "§5 全量 30 个 + 0.9.0 create_subcategory + get_snippet + 扩展桥 2 个");
         let read = r.available(crate::agent::approval::PermissionMode::ReadOnly).len();
-        assert_eq!(read, 13, "读 13 个");
+        assert_eq!(read, 15, "读 15 个（含扩展桥 extension_tool_list/call，静态 Read）");
+    }
+
+    /// 扩展桥的审批档位覆写：approval_for 按目标工具声明取档；宿主未就绪/目标不存在
+    /// 时回落 (Read, 工具名)，执行阶段报明确原因
+    #[test]
+    fn extension_tool_call_approval_falls_back_without_host() {
+        let r = reg();
+        let t = r.get("extension_tool_call").unwrap();
+        let (level, key) = t.approval_for(&json!({"ext":"com.a","tool":"query"}));
+        assert_eq!(level, Level::Read, "单测环境无 HOST_APP，聚合为空 → 回落 Read");
+        assert_eq!(key, "extension_tool_call");
+        let (level2, key2) = t.approval_for(&json!({}));
+        assert_eq!(level2, Level::Read);
+        assert_eq!(key2, "extension_tool_call");
     }
 
     /// 0.9.0 审查回归：LLM 输出的分钟数/时间戳是不可信输入——超界必须明确拒绝，

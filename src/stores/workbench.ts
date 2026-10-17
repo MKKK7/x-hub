@@ -232,6 +232,8 @@ const state = reactive<StoreState>({
     agent_permission_mode: 'ask',
     agent_about_me: '',
     agent_prompt_on_dangerous: false,
+    agent_ext_tools_enabled: true,
+    agent_ext_tool_grants: {},
   },
   systemInfo: null,
   online: false,
@@ -1565,17 +1567,20 @@ export function useStore() {
     state.config.chat_models = models
   }
 
-  /** AI 助手权限与个性化（#t47）：默认权限档 / 完全权限档危险操作提示 / 关于我。
+  /** AI 助手权限与个性化（#t47）：默认权限档 / 完全权限档危险操作提示 / 关于我 / 扩展工具总开关。
    *  只写传入的字段，一次落盘；后端 send_agent_message 未带快捷档时读这些值 */
   async function setAgentSettings(patch: {
     agent_permission_mode?: string
     agent_about_me?: string
     agent_prompt_on_dangerous?: boolean
+    agent_ext_tools_enabled?: boolean
   }) {
     if (patch.agent_permission_mode !== undefined) state.config.agent_permission_mode = patch.agent_permission_mode
     if (patch.agent_about_me !== undefined) state.config.agent_about_me = patch.agent_about_me
     if (patch.agent_prompt_on_dangerous !== undefined)
       state.config.agent_prompt_on_dangerous = patch.agent_prompt_on_dangerous
+    if (patch.agent_ext_tools_enabled !== undefined)
+      state.config.agent_ext_tools_enabled = patch.agent_ext_tools_enabled
     if (!isTauri()) return
     await tauriApi.saveConfig(state.config)
   }
@@ -1700,6 +1705,14 @@ export function useStore() {
   function setExtensionLinkMode(id: string, mode: string) {
     const modes = state.config.extension_link_modes ?? {}
     state.config.extension_link_modes = { ...modes, [id]: mode }
+    if (!isTauri()) return
+    void tauriApi.saveConfig(state.config)
+  }
+
+  /** 扩展 AI 工具授权：该扩展声明的 agent.tools 是否进入 AI 助手的聚合清单（缺省允许） */
+  function setExtensionAgentGrant(id: string, granted: boolean) {
+    const grants = state.config.agent_ext_tool_grants ?? {}
+    state.config.agent_ext_tool_grants = { ...grants, [id]: granted }
     if (!isTauri()) return
     void tauriApi.saveConfig(state.config)
   }
@@ -2107,6 +2120,7 @@ export function useStore() {
     setSidebarExtensionBulk,
     setExtensionOpenMode,
     setExtensionLinkMode,
+    setExtensionAgentGrant,
     setExtensionRowClick,
     setRunAtStartup,
     setFloatingBallEnabled,

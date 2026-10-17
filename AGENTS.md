@@ -321,5 +321,6 @@ npm run tauri:test    # Rust 单元测试（Windows 必须走此包装脚本，�
 
 - 已决策未实施：**首次使用引导**（快速设置弹窗 + 帮助视图；决策见 `docs/adr/0001-first-run-onboarding.md`，术语预登记于 `CONTEXT.md`「引导」节，实施前代码中无 OnboardingDialog/HelpView/onboarding_done）
 - 方案已定稿未实施：**本地文件搜索**（索引工作区模型，见 `docs/file-search-plan.md`）
-- 方案已定稿未实施：**Agent 底座**（宿主内自研 agent loop，非外部引擎；模型接入走「平台额度 + BYOK」双路，13 个首批工具 + 三档权限模式；选型决策见 `docs/adr/0006-agent-runtime-selection.md`，实施蓝图见 `docs/agent-foundation-plan.md`。实施前代码中无 `src-tauri/src/agent/`、`chat_messages` 无 `turn_id` 列、`role` 仍只有 user/assistant）
+- ~~方案已定稿未实施：**Agent 底座**~~（**已实施**，0.9.0：`src-tauri/src/agent/` 上线——mod/tools/builtin/approval/turn/context/prompt/state 七件套 + 34 个内置工具 + 权限三档（readonly/ask/full，会话级授权）+ turn 循环；选型决策见 `docs/adr/0006-agent-runtime-selection.md`，实施蓝图见 `docs/agent-foundation-plan.md`）
+- 已实施（0.9.x）：**扩展向 AI 助手暴露工具**（manifest 自描述，对齐 MCP tools/list + tools/call）——service 扩展在 manifest 声明 `agent.tools[]`（name/description/level/parameters JSON Schema/returns），`agent/ext_tools.rs` 聚合已启用且未被用户关闭的声明，`extension_tool_list` / `extension_tool_call` 两个内置工具消费；转发约定：宿主 POST 后端 `/xhub/agent-tool`（body `{"tool","args"}`，2xx 响应体即结果，上限 256KB，后端没在跑会自动拉起）；审批档位按声明 `level` 动态取（`AgentTool::approval_for` 覆写，会话授权键带 ext/tool 细粒度）；开关 = 设置 → AI 助手总开关 + 扩展设置弹窗「AI 助手」区块每扩展开关（`agent_ext_tools_enabled` / `agent_ext_tool_grants`，缺省允许）；**AI 工具授权 ≠ 扩展 manifest 权限，两套体系不可混用**；扩展开发侧规范见 `skills/x-hub-extension/references/manifest.md`「AI 助手工具」与 `service.md`「AI 工具端点」
 - 可探索方向：拖拽排序动效打磨、键盘导航、前端单元测试、打包发布全流程验证（tauri:build）
