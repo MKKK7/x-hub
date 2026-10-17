@@ -638,6 +638,7 @@ pub fn run() {
             commands::import_note_image,
             commands::read_text_file,
             claudehalo::claudehalo_get_status,
+            claudehalo::claudehalo_install_hook,
             commands::inspect_path,
             commands::scan_installed_apps,
             commands::get_running_processes,

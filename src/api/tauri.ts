@@ -868,12 +868,23 @@ export interface ClaudeHaloSession {
   state: string
   /** 状态文件绝对路径（找不到时为 null） */
   state_file: string | null
+  /** 会话标题（窗口标题，EnumWindows 拿不到时为 null） */
+  title: string | null
   /** 探测时间戳 (毫秒) */
   detected_at: number
 }
 
 /** 向后兼容别名（旧版本用 ClaudeHaloStatus 名称） */
 export type ClaudeHaloStatus = ClaudeHaloSession
+
+/** 一键安装 ClaudeHalo hook 到 ~/.claude/settings.json 的结果 */
+export interface InstallHookResult {
+  settings_path: string
+  /** true = 已存在 SessionStart 配置, 跳过注入（幂等） */
+  already_configured: boolean
+  /** 实际使用的 hook 脚本路径 */
+  script_path: string
+}
 
 export interface ChatSession {
   id: number
@@ -1190,6 +1201,11 @@ export const tauriApi = {
   getNetStats: () => invoke<NetStats>('get_net_stats'),
   /** 探测所有在跑的 Claude Code session（Q2 进度监控） */
   claudehaloGetStatus: () => invoke<ClaudeHaloSession[]>('claudehalo_get_status'),
+  /** 一键安装 ClaudeHalo hook 到 ~/.claude/settings.json (幂等) */
+  claudehaloInstallHook: (hookScriptPath?: string | null) =>
+    invoke<InstallHookResult>('claudehalo_install_hook', {
+      hookScriptPath: hookScriptPath ?? null,
+    }),
   listSnippets: () => invoke<Snippet[]>('list_snippets'),
   createSnippet: (title: string, content: string) =>
     invoke<Snippet>('create_snippet', { title, content }),
