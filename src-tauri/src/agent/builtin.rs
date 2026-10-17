@@ -554,8 +554,10 @@ impl AgentTool for CreateTodo {
     fn description(&self) -> &'static str { "新建待办。title 必填；due_at/remind_at 支持「YYYY-MM-DD HH:mm」或毫秒时间戳；priority 0-2；repeat 传对象：{\"mode\":\"daily\"} 或 {\"mode\":\"weekly\",\"weekdays\":[1,3]} 或 {\"mode\":\"monthly\",\"month_day\":15}（也接受裸字符串 \"daily\"）。" }
     fn level(&self) -> Level { Level::Write }
     fn parameters(&self) -> Value { json!({"type":"object","properties":{
-        "title":{"type":"string"},"due_at":{},"remind_at":{},
-        "priority":{"type":"integer","minimum":0,"maximum":2},
+        "title":{"type":"string"},
+        "due_at":{"description":"截止时间：「YYYY-MM-DD HH:mm」24小时制，或毫秒时间戳；不传 = 无截止日期"},
+        "remind_at":{"description":"提醒时间：格式同 due_at；不传 = 不提醒"},
+        "priority":{"type":"integer","minimum":0,"maximum":2,"description":"0=普通（默认）1=重要 2=紧急"},
         "repeat":{"type":"object","properties":{
             "mode":{"type":"string","enum":["daily","weekly","monthly"]},
             "weekdays":{"type":"array","items":{"type":"integer","minimum":0,"maximum":6},"description":"weekly 必填：周几列表，0=周一…6=周日"},

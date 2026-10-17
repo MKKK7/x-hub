@@ -4374,30 +4374,35 @@ pub async fn send_agent_message(
     agent.finish_turn(&turn_id);
 
     // 6) 落库（pending 顺序即发生顺序）+ 用量累加 + 收尾事件
+    // 工具改过的数据域广播刷新事件（0.9.0 修复：agent 建的待办/笔记此前
+    // 不触发任何刷新事件，界面上「显示成功但看不到数据」）。事件名与
+    // UI 命令一致（todos-changed 等），各窗口界面统一刷新。
+    // Ok/Err 两条出口都要广播：真错误（模型调用断掉等）发生前工具可能已经写过库，
+    // 只在成功路径广播会漏掉这批写入——待办已建、界面却再也不刷新。
+    let broadcast_domains = |domains: &std::collections::BTreeSet<String>| {
+        for domain in domains {
+            let event = match domain.as_str() {
+                "todos" => Some(("todos-changed", Some("todo-tags-changed"))),
+                "notes" => Some(("notes-changed", None)),
+                "snippets" => Some(("snippets-changed", None)),
+                "stickies" => Some(("stickies-changed", None)),
+                "countdowns" => Some(("countdowns-changed", None)),
+                "resources" => Some(("resources-changed", None)),
+                _ => None,
+            };
+            if let Some((primary, secondary)) = event {
+                let _ = app.emit(primary, ());
+                if let Some(sec) = secondary {
+                    let _ = app.emit(sec, ());
+                }
+            }
+        }
+    };
     match result {
         Ok(art) => {
             let usage = art.usage;
             let tool_count = art.tool_count;
-            // 工具改过的数据域广播刷新事件（0.9.0 修复：agent 建的待办/笔记此前
-            // 不触发任何刷新事件，界面上「显示成功但看不到数据」）。事件名与
-            // UI 命令一致（todos-changed 等），各窗口界面统一刷新。
-            for domain in &art.domains {
-                let event = match domain.as_str() {
-                    "todos" => Some(("todos-changed", Some("todo-tags-changed"))),
-                    "notes" => Some(("notes-changed", None)),
-                    "snippets" => Some(("snippets-changed", None)),
-                    "stickies" => Some(("stickies-changed", None)),
-                    "countdowns" => Some(("countdowns-changed", None)),
-                    "resources" => Some(("resources-changed", None)),
-                    _ => None,
-                };
-                if let Some((primary, secondary)) = event {
-                    let _ = app.emit(primary, ());
-                    if let Some(sec) = secondary {
-                        let _ = app.emit(sec, ());
-                    }
-                }
-            }
+            broadcast_domains(&art.domains);
             let mut last: Option<crate::models::ChatMessage> = None;
             {
                 let conn = state.0.lock().map_err(|e| e.to_string())?;
@@ -4450,12 +4455,16 @@ pub async fn send_agent_message(
                     .map_err(|e| e.to_string())?,
             }
         }
-        Err(e) => on_event
-            .send(crate::chat::ChatStreamEvent::Error {
-                message: e,
-                partial: partial_buf.lock().map(|b| b.clone()).unwrap_or_default(),
-            })
-            .map_err(|e2| e2.to_string())?,
+        Err((e, art)) => {
+            // 已执行的写入照常广播刷新（见 broadcast_domains 注释）；过程消息按既有口径不落库
+            broadcast_domains(&art.domains);
+            on_event
+                .send(crate::chat::ChatStreamEvent::Error {
+                    message: e,
+                    partial: partial_buf.lock().map(|b| b.clone()).unwrap_or_default(),
+                })
+                .map_err(|e2| e2.to_string())?;
+        }
     }
 
     Ok(())

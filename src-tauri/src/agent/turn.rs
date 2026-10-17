@@ -110,6 +110,10 @@ pub struct TurnArtifacts {
 
 /// 跑一轮对话。`history` 为调用方组装好的上下文（**已含本轮 user 消息**，已按 turn 截断）；
 /// `system_prompt` 由 `prompt::build_system_prompt` 组装。
+///
+/// 真错误以 `Err((原因, 已产出产物))` 返回：出错前工具可能已经改过数据（比如待办已建），
+/// 调用方必须照常按 `domains` 广播刷新事件——只把错误抛上去会把「已生效的写入」瞒在库里，
+/// 界面上又是「说建好了却看不到」。
 #[allow(clippy::too_many_arguments)]
 pub async fn run_agent_turn<K>(
     session_id: i64,
@@ -123,19 +127,51 @@ pub async fn run_agent_turn<K>(
     max_rounds: usize,
     invoke: &mut dyn ModelInvoke,
     approve: &mut dyn Approver,
-    mut emit: impl FnMut(ChatStreamEvent) -> Result<(), String> + Send,
+    emit: impl FnMut(ChatStreamEvent) -> Result<(), String> + Send,
     is_cancelled: impl Fn() -> bool,
     // 生产传 db::open_tool_connection，测试传内存库工厂（工具执行不碰真实数据）
     open_tool_conn: K,
-) -> Result<TurnArtifacts, String>
+) -> Result<TurnArtifacts, (String, TurnArtifacts)>
+where
+    K: Fn() -> std::result::Result<rusqlite::Connection, String>,
+{
+    let mut art = TurnArtifacts::default();
+    match run_agent_turn_inner(
+        session_id, turn_id, mode, grants, prompt_on_dangerous_in_full, registry,
+        system_prompt, history, max_rounds, invoke, approve, emit, is_cancelled,
+        open_tool_conn, &mut art,
+    )
+    .await
+    {
+        Ok(()) => Ok(art),
+        Err(e) => Err((e, art)),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_agent_turn_inner<K>(
+    session_id: i64,
+    turn_id: &str,
+    mode: PermissionMode,
+    grants: &mut SessionGrants,
+    prompt_on_dangerous_in_full: bool,
+    registry: &ToolRegistry,
+    system_prompt: &str,
+    history: Vec<ChatMessage>,
+    max_rounds: usize,
+    invoke: &mut dyn ModelInvoke,
+    approve: &mut dyn Approver,
+    mut emit: impl FnMut(ChatStreamEvent) -> Result<(), String> + Send,
+    is_cancelled: impl Fn() -> bool,
+    open_tool_conn: K,
+    art: &mut TurnArtifacts,
+) -> Result<(), String>
 where
     K: Fn() -> std::result::Result<rusqlite::Connection, String>,
 {
     let mut convo: Vec<ChatMessage> = Vec::with_capacity(history.len() + 8);
     convo.push(wire_msg("system", system_prompt.to_string(), turn_id, None, None, None, None));
     convo.extend(history);
-
-    let mut art = TurnArtifacts::default();
 
     for round in 1..=max_rounds {
         if is_cancelled() {
@@ -172,6 +208,7 @@ where
         buf.push_str(&output.content);
 
         if output.tool_calls.is_empty() {
+            log::info!("[agent:{turn_id}] 第 {round} 轮：模型未发起工具调用，直接给出回复");
             let content = buf.trim().to_string();
             art.pending.push(PendingMessage {
                 role: "assistant".into(),
@@ -182,10 +219,11 @@ where
                 tool_status: None,
             });
             art.final_reply = Some(content);
-            return Ok(art);
+            return Ok(());
         }
 
         // 中间 assistant 消息：落库与回传都按 OpenAI 协议形态存 tool_calls
+        log::info!("[agent:{turn_id}] 第 {round} 轮：{} 个工具调用", output.tool_calls.len());
         let tc_json = tool_calls_json(&output.tool_calls)?;
         let asst = PendingMessage {
             role: "assistant".into(),
@@ -220,7 +258,7 @@ where
                         &ToolOutcome::err("回合已中断，该调用未执行", String::new()),
                         "cancelled",
                         &mut emit,
-                        &mut art,
+                        art,
                         &mut convo,
                     );
                 }
@@ -230,18 +268,27 @@ where
                 .get(&call.name)
                 .map(|t| t.level())
                 .unwrap_or(Level::Read);
-            match decide(
+            let decision = decide(
                 mode,
                 level,
                 &call.name,
                 session_id,
                 grants,
                 prompt_on_dangerous_in_full,
-            ) {
+            );
+            // 全链路留痕：模型没调工具 / 调了被拒 / 等审批 / 已授权直跑，翻日志即知
+            // （「模型谎报已记录」那次靠翻库才定位，log 里有案底就不用再翻）
+            log::info!(
+                "[agent:{turn_id}] 工具 {}（{}）→ {:?}",
+                call.name,
+                level.as_str(),
+                decision
+            );
+            match decision {
                 Decision::Execute => {
                     execute_call(
                         session_id, turn_id, &call, level, registry, &mut emit,
-                        &mut art, &mut convo, &open_tool_conn,
+                        art, &mut convo, &open_tool_conn,
                     )?;
                 }
                 Decision::NeedApproval => {
@@ -272,14 +319,14 @@ where
                                 &ToolOutcome::err("用户拒绝执行该工具", String::new()),
                                 "denied",
                                 &mut emit,
-                                &mut art,
+                                art,
                                 &mut convo,
                             )?;
                         }
                         ApproveAnswer::Once => {
                             execute_call(
                                 session_id, turn_id, &call, level, registry,
-                                &mut emit, &mut art, &mut convo, &open_tool_conn,
+                                &mut emit, art, &mut convo, &open_tool_conn,
                             )?;
                         }
                         ApproveAnswer::Always => {
@@ -287,7 +334,7 @@ where
                             grants.grant(session_id, &call.name);
                             execute_call(
                                 session_id, turn_id, &call, level, registry,
-                                &mut emit, &mut art, &mut convo, &open_tool_conn,
+                                &mut emit, art, &mut convo, &open_tool_conn,
                             )?;
                         }
                     }
@@ -304,7 +351,7 @@ where
                         ),
                         "denied",
                         &mut emit,
-                        &mut art,
+                        art,
                         &mut convo,
                     )?;
                 }
@@ -330,7 +377,7 @@ where
         });
         art.final_reply = Some(text);
     }
-    Ok(art)
+    Ok(())
 }
 
 /// 已获准（或会话已授权）的调用：发 ToolCall → 执行 → 发 ToolResult → 追加 tool 消息。
@@ -357,6 +404,11 @@ fn execute_call(
         level: level.as_str().to_string(),
     })?;
     let outcome = run_tool(registry, call, open_conn);
+    log::info!(
+        "[agent:{turn_id}] 工具 {} {}",
+        call.name,
+        if outcome.ok { "执行成功" } else { "执行失败" }
+    );
     if outcome.ok {
         art.tool_count += 1;
         // 记录实际改动的数据域，回合结束由调用方广播刷新事件
@@ -924,7 +976,69 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert_eq!(err, "上游 500");
+        assert_eq!(err.0, "上游 500");
+    }
+
+    /// 错误路径不得丢掉 domains：工具执行成功之后上游才断掉时，Err 必须带回工具
+    /// 改过的数据域——调用方要靠它在 Err 分支照常广播刷新事件（待办已建、界面得知道）
+    #[tokio::test]
+    async fn invoke_error_keeps_domains() {
+        // 名字进 domain_of 映射（→ "todos"）；档位 Read 免走审批，直通执行
+        struct TodoTool;
+        impl AgentTool for TodoTool {
+            fn name(&self) -> &'static str {
+                "create_todo"
+            }
+            fn description(&self) -> &'static str {
+                "测试写入工具"
+            }
+            fn level(&self) -> Level {
+                Level::Read
+            }
+            fn parameters(&self) -> Value {
+                json!({"type":"object","properties":{}})
+            }
+            fn execute(&self, _args: &Value, _ctx: ToolCtx) -> ToolOutcome {
+                ToolOutcome::ok("已创建", "已创建待办")
+            }
+        }
+        // 第一轮正常返回工具调用，第二轮模型调用失败：模拟「工具已执行、上游断连」
+        struct ToolThenBoom(usize);
+        impl ModelInvoke for ToolThenBoom {
+            fn invoke<'a>(
+                &mut self,
+                _msgs: Vec<ChatMessage>,
+                _tools: Option<Vec<Value>>,
+                _cb: ChunkCb<'a>,
+            ) -> InvokeFuture<'a> {
+                self.0 += 1;
+                let n = self.0;
+                Box::pin(async move {
+                    if n == 1 {
+                        Ok(round_with("", vec![call("c1", "create_todo", "{}")]))
+                    } else {
+                        Err("上游 500".into())
+                    }
+                })
+            }
+        }
+        let mut registry = ToolRegistry::empty();
+        registry.register(Box::new(TodoTool));
+        let (emit, _) = collector();
+        let mut grants = SessionGrants::default();
+        let mut inv = ToolThenBoom(0);
+        let err = run_agent_turn(
+            SID, TURN, PermissionMode::Ask, &mut grants, false, &registry, "sys", vec![],
+            MAX_ROUNDS, &mut inv, &mut Nop, emit, || false, mem_conn,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.0, "上游 500");
+        assert!(
+            err.1.domains.contains("todos"),
+            "Err 必须带回工具已改过的数据域，实际：{:?}",
+            err.1.domains
+        );
     }
 
     /// 0.9.0 审查回归：流式中途取消（invoke 以 Err("已中断") 收场）不能再向上抛——
