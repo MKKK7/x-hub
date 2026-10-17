@@ -412,7 +412,21 @@ watch(
       </div>
     </header>
 
-    <!-- 标签筛选行：与待办视图同语言（chips + 未完成计数），点标签即查待办 -->
+    <div v-if="view === 'pending'" class="todo-add">
+      <textarea
+        v-model="input"
+        class="todo-input"
+        rows="1"
+        placeholder="添加待办，回车确认"
+        aria-label="添加待办"
+        @keydown.enter="onAddKeydown"
+      ></textarea>
+      <p class="todo-input-hint">回车：新建待办　·　粘贴序号列表（1. 2. 3.）可拆成多条</p>
+    </div>
+
+    <!-- 标签筛选行：与待办视图同语言（chips + 未完成计数），点标签即查待办。
+         紧贴列表上方（2026-10-16 反馈「放到置顶上面」）：输入完一抬眼就是过滤器，
+         过滤着哪个范围直接看得到 -->
     <div v-if="allTags.length" class="todo-tagbar">
       <button
         v-for="tag in allTags"
@@ -435,18 +449,6 @@ watch(
       >
         <X :size="10" :stroke-width="2.5" aria-hidden="true" />清除
       </button>
-    </div>
-
-    <div v-if="view === 'pending'" class="todo-add">
-      <textarea
-        v-model="input"
-        class="todo-input"
-        rows="1"
-        placeholder="添加待办，回车确认"
-        aria-label="添加待办"
-        @keydown.enter="onAddKeydown"
-      ></textarea>
-      <p class="todo-input-hint">回车：新建待办　·　粘贴序号列表（1. 2. 3.）可拆成多条</p>
     </div>
 
     <div ref="bodyRef" class="todo-body">
@@ -726,14 +728,17 @@ watch(
   border-radius: 50%;
   flex-shrink: 0;
 }
+/* 计数药丸与 .tv-tagchip .cnt 同口径：flex 自居中 + line-height 1，数字与标签名垂直对齐 */
 .tc-tagchip .cnt {
+  display: inline-flex;
+  align-items: center;
   font-size: 0.85em;
   font-weight: 600;
   color: var(--text-4);
   background: var(--bg-page);
   border-radius: var(--radius-pill);
-  padding: 0 5px;
-  line-height: 1.5;
+  padding: 2px 5px;
+  line-height: 1;
 }
 .tc-tagchip.on .cnt {
   color: var(--brand-500);

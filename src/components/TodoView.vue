@@ -103,6 +103,20 @@ const visible = computed(() =>
   topTodos.value.filter((t) => (showDone.value ? t.done : !t.done) && hasTag(t) && (showDone.value || inHorizon(t, horizon.value, today.value))),
 )
 
+/** 各范围档的命中数（与 visible 同一过滤基底，只换范围档）。范围切换只影响「未来日期」
+ *  的条目——置顶/逾期/无截止在任何范围下都常显（inHorizon 的既定口径），待办多是这几类时
+ *  列表肉眼无变化，容易被当成「切了没反应」；按钮上直接给计数，让筛选生效看得见 */
+const horizonCounts = computed(() => {
+  const map = new Map<Horizon, number>()
+  for (const h of HORIZONS) {
+    map.set(
+      h.key,
+      topTodos.value.filter((t) => (showDone.value ? t.done : !t.done) && hasTag(t) && (showDone.value || inHorizon(t, h.key, today.value))).length,
+    )
+  }
+  return map
+})
+
 /** 分组：置顶 → 逾期 → 今天 → 本周 → 本月 → 以后 → 无日期（组内按手动排序/创建时间） */
 const groups = computed(() => {
   const buckets: Todo[][] = VIEW_GROUP_META.map(() => [])
@@ -173,6 +187,23 @@ const titleOf = computed(() => {
   for (const t of store.state.todos) map.set(t.id, t.title)
   return map
 })
+
+/** 日历格内最多直接展示的条数：其余折叠成「…+N」——一格塞十来条会把月历撑爆，
+ *  完整清单看格子下方的「当天明细」（点格子即达） */
+const CELL_MAX_CHIPS = 2
+
+/** 某个日期格要渲染的 chips：真实条目优先、周期虚拟实例补位，剩余计进折叠口 */
+function chipsOf(key: string) {
+  const real = realByDay.value.get(key) ?? []
+  const virtual = virtualByDay.value.get(key) ?? []
+  const shownReal = real.slice(0, CELL_MAX_CHIPS)
+  const shownVirtual = virtual.slice(0, CELL_MAX_CHIPS - shownReal.length)
+  return {
+    real: shownReal,
+    virtual: shownVirtual,
+    extra: real.length + virtual.length - shownReal.length - shownVirtual.length,
+  }
+}
 
 /** 右侧日历下方「选中那天」的待办清单：点格子切换（默认今天），未完成在前、已完成在后 */
 const selectedDay = ref(isoKey(new Date()))
@@ -499,7 +530,7 @@ function onVirtualDown(e: PointerEvent) {
               :class="{ on: horizon === h.key }"
               @click="horizon = h.key"
             >
-              {{ h.label }}
+              {{ h.label }} <span class="cnt">{{ horizonCounts.get(h.key) ?? 0 }}</span>
             </button>
           </div>
           <span class="tv-spacer"></span>
@@ -601,7 +632,7 @@ function onVirtualDown(e: PointerEvent) {
             <span class="tv-day">{{ c.day }}</span>
             <div class="tv-chips">
               <button
-                v-for="t in realByDay.get(c.key) ?? []"
+                v-for="t in chipsOf(c.key).real"
                 :key="'r' + t.id"
                 type="button"
                 class="tv-chip real"
@@ -614,13 +645,21 @@ function onVirtualDown(e: PointerEvent) {
                 {{ t.title }}
               </button>
               <span
-                v-for="o in virtualByDay.get(c.key) ?? []"
+                v-for="o in chipsOf(c.key).virtual"
                 :key="'v' + o.todo_id + o.at_ms"
                 class="tv-chip virtual"
                 :title="`${titleOf.get(o.todo_id) ?? '周期待办'}（周期规则算出的未来实例，不能拖动）`"
                 @pointerdown="onVirtualDown"
               >
                 {{ titleOf.get(o.todo_id) ?? '周期待办' }}
+              </span>
+              <!-- 折叠尾巴：只提示数量，点击落到格子上选中当天，完整清单看下方明细 -->
+              <span
+                v-if="chipsOf(c.key).extra > 0"
+                class="tv-chip more"
+                :title="`还有 ${chipsOf(c.key).extra} 条没展示，点格子看当天全部待办`"
+              >
+                …+{{ chipsOf(c.key).extra }}
               </span>
             </div>
           </div>
@@ -638,7 +677,7 @@ function onVirtualDown(e: PointerEvent) {
             <div class="tv-weekhead">{{ c.date.getMonth() + 1 }}/{{ c.date.getDate() }} 周{{ ['一', '二', '三', '四', '五', '六', '日'][(c.date.getDay() + 6) % 7] }}</div>
             <div class="tv-chips">
               <button
-                v-for="t in realByDay.get(c.key) ?? []"
+                v-for="t in chipsOf(c.key).real"
                 :key="'r' + t.id"
                 type="button"
                 class="tv-chip real"
@@ -652,13 +691,20 @@ function onVirtualDown(e: PointerEvent) {
                 <i v-if="t.due_at" class="time">{{ fmtHM(t.due_at) }}</i>
               </button>
               <span
-                v-for="o in virtualByDay.get(c.key) ?? []"
+                v-for="o in chipsOf(c.key).virtual"
                 :key="'v' + o.todo_id + o.at_ms"
                 class="tv-chip virtual"
                 :title="`${titleOf.get(o.todo_id) ?? '周期待办'}（周期规则算出的未来实例，不能拖动）`"
                 @pointerdown="onVirtualDown"
               >
                 {{ titleOf.get(o.todo_id) ?? '周期待办' }}
+              </span>
+              <span
+                v-if="chipsOf(c.key).extra > 0"
+                class="tv-chip more"
+                :title="`还有 ${chipsOf(c.key).extra} 条没展示，点格子看当天全部待办`"
+              >
+                …+{{ chipsOf(c.key).extra }}
               </span>
             </div>
           </div>
@@ -782,15 +828,20 @@ function onVirtualDown(e: PointerEvent) {
   color: var(--text-1);
   font-weight: 600;
 }
-/* chip 上的待办计数：弱化展示，激活态跟着主色走 */
+/* chip 上的待办计数：弱化展示，激活态跟着主色走。
+   自居中 flex 药丸 + line-height 1：小字号计数与 CJK 标签名行盒度量不同，
+   用行高撑盒会让数字视觉上偏高——药丸自身对称包住数字，再由 chip 的
+   align-items: center 对齐标签名 */
 .tv-tagchip .cnt {
+  display: inline-flex;
+  align-items: center;
   font-size: 0.62rem;
   font-weight: 600;
   color: var(--text-4);
   background: var(--bg-page);
   border-radius: var(--radius-pill);
-  padding: 0 5px;
-  line-height: 1.5;
+  padding: 2px 5px;
+  line-height: 1;
 }
 .tv-tagchip.on .cnt {
   color: var(--brand-500);
@@ -801,7 +852,8 @@ function onVirtualDown(e: PointerEvent) {
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 2px 14px 10px;
+  /* 水平不加额外内边距：与上方工具栏「今天」按钮同一条 12px 卡片内边距线对齐 */
+  padding: 2px 0 10px;
 }
 .tv-tagclear {
   border: none;
@@ -867,6 +919,12 @@ function onVirtualDown(e: PointerEvent) {
   color: #fff;
   font-weight: 600;
 }
+/* 范围档计数（与标签 chip 的 .cnt 同语言）：筛选生效的即时反馈 */
+.tv-seg button .cnt {
+  margin-left: 3px;
+  font-weight: 400;
+  opacity: 0.62;
+}
 .tv-ghost {
   padding: 4px 10px;
   font-size: 0.72rem;
@@ -900,7 +958,14 @@ function onVirtualDown(e: PointerEvent) {
   flex-direction: column;
   gap: 8px;
   padding: 12px;
+}
+/* 左列表整卡滚动照旧；右卡自身不滚——点格子后上下滚动只滚「当天明细」清单，
+   不把上面的整个日历带起来（反馈：看当天待办时日历跟着滚走了） */
+.tv-list {
   overflow: auto;
+}
+.tv-cal {
+  overflow: hidden;
 }
 .tv-body:not(.narrow) .tv-list {
   flex: 0 0 40%;
@@ -1078,6 +1143,14 @@ function onVirtualDown(e: PointerEvent) {
   gap: 2px;
   margin-top: 2px;
 }
+/* 折叠尾巴「…+N」：不可交互的纯提示，点击落在日历格上选中当天（完整清单看下方明细） */
+.tv-chip.more {
+  background: transparent;
+  border: 1px dashed var(--border-soft);
+  color: var(--text-4);
+  text-align: center;
+  cursor: default;
+}
 .tv-chip {
   display: block;
   width: 100%;
@@ -1137,6 +1210,9 @@ function onVirtualDown(e: PointerEvent) {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  /* 占满日历下方剩余空间；日期头固定在外，只有清单自己滚 */
+  flex: 1;
+  min-height: 0;
 }
 .tv-dayview-h {
   display: flex;
@@ -1160,6 +1236,10 @@ function onVirtualDown(e: PointerEvent) {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* 右卡唯一的滚动区：当天待办多时只滚这份清单 */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 .tv-dayview-row {
   display: flex;
